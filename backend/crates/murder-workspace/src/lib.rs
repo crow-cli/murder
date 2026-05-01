@@ -8,6 +8,7 @@ pub mod watcher;
 pub mod fuzzy_file_finder;
 pub mod search;
 pub mod workspace;
+pub mod worktree_state;
 
 pub use error::{WorkspaceError, WorkspaceResult};
 pub use file_ops::{DirEntry, FileStat};
@@ -20,3 +21,4 @@ pub use search::{
     CancellationToken, SearchEngine,
 };
 pub use workspace::Workspace;
+pub use worktree_state::{WorktreeState, FileChange};

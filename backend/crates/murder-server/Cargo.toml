@@ -12,6 +12,7 @@ murder-text = { workspace = true }
 murder-workspace = { workspace = true }
 murder-git = { workspace = true }
 murder-terminal = { workspace = true }
+murder-acp = { workspace = true }
 
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -28,6 +29,7 @@ futures = { workspace = true }
 notify = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
+crossbeam = { workspace = true }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 rust-embed = "8"

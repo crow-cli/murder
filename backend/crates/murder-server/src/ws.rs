@@ -12,14 +12,14 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, Router},
 };
-use futures::{SinkExt, StreamExt};
 use mime_guess::from_path;
+use murder_terminal::TerminalEvent;
 use rust_embed::RustEmbed;
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 use crate::handlers;
-use crate::router::{WsError, WsRequest, WsResponse};
+use crate::router::{WsError, WsNotification, WsRequest, WsResponse};
 use crate::state::AppState;
 
 /// Shared state wrapped for Axum extraction.
@@ -55,31 +55,140 @@ async fn ws_handler(ws: WebSocketUpgrade, State(app): State<App>) -> impl IntoRe
 async fn handle_socket(mut socket: WebSocket, app: App) {
     tracing::info!("WebSocket client connected");
 
-    while let Some(msg) = socket.recv().await {
-        let msg = match msg {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!("WebSocket error: {e}");
-                break;
-            }
-        };
+    // Subscribe to terminal event broadcasts
+    let mut event_rx = {
+        let state = app.lock().await;
+        state.terminal_events_tx.subscribe()
+    };
 
-        match msg {
-            Message::Text(text) => {
-                let result = handle_message(&text, &app).await;
-                let response = serde_json::to_string(&result).unwrap_or_else(|_| {
-                    r#"{"id":0,"error":"failed to serialize response"}"#.into()
-                });
-                if let Err(e) = socket.send(Message::Text(response)).await {
-                    tracing::warn!("Failed to send response: {e}");
-                    break;
+    // Subscribe to ACP agent event broadcasts
+    let mut acp_rx = {
+        let state = app.lock().await;
+        state.agents.events_tx.subscribe()
+    };
+
+    // Subscribe to ACP terminal event broadcasts
+    let mut acp_term_rx = {
+        let state = app.lock().await;
+        state.agents.terminals.subscribe_events()
+    };
+
+    // Subscribe to worktree file change broadcasts
+    let mut worktree_rx = {
+        let state = app.lock().await;
+        state.worktree_events_tx.subscribe()
+    };
+
+    loop {
+        tokio::select! {
+            // Incoming WebSocket message
+            msg = socket.recv() => {
+                let msg = match msg {
+                    Some(Ok(m)) => m,
+                    Some(Err(e)) => {
+                        tracing::warn!("WebSocket error: {e}");
+                        break;
+                    }
+                    None => {
+                        tracing::info!("WebSocket client disconnected");
+                        break;
+                    }
+                };
+
+                match msg {
+                    Message::Text(text) => {
+                        let result = handle_message(&text, &app).await;
+                        let response = serde_json::to_string(&result).unwrap_or_else(|_| {
+                            r#"{"id":0,"error":"failed to serialize response"}"#.into()
+                        });
+                        if let Err(e) = socket.send(Message::Text(response)).await {
+                            tracing::warn!("Failed to send response: {e}");
+                            break;
+                        }
+                    }
+                    Message::Close(_) => {
+                        tracing::info!("WebSocket client disconnected");
+                        break;
+                    }
+                    _ => {}
                 }
             }
-            Message::Close(_) => {
-                tracing::info!("WebSocket client disconnected");
-                break;
+            // Terminal event from broadcast
+            event = event_rx.recv() => {
+                match event {
+                    Ok(json) => {
+                        if let Err(e) = socket.send(Message::Text(json)).await {
+                            tracing::warn!("Failed to push terminal event: {e}");
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // Dropped events — continue
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
             }
-            _ => {}
+            // ACP agent event from broadcast
+            acp_event = acp_rx.recv() => {
+                match acp_event {
+                    Ok(json) => {
+                        if let Err(e) = socket.send(Message::Text(json)).await {
+                            tracing::warn!("Failed to push ACP event: {e}");
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // Dropped events — continue
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+            // ACP terminal event from broadcast
+            acp_term_event = acp_term_rx.recv() => {
+                match acp_term_event {
+                    Ok(event) => {
+                        let notification = match event {
+                            murder_acp::terminals::AcpTerminalEvent::Data { terminal_id, data } => WsNotification {
+                                method: "acp-terminal-data".into(),
+                                params: serde_json::json!({ "terminalId": terminal_id, "data": data }),
+                            },
+                            murder_acp::terminals::AcpTerminalEvent::Exit { terminal_id, exit_code, signal } => WsNotification {
+                                method: "acp-terminal-exit".into(),
+                                params: serde_json::json!({ "terminalId": terminal_id, "exitCode": exit_code, "signal": signal }),
+                            },
+                        };
+                        if let Ok(json) = serde_json::to_string(&notification) {
+                            if let Err(e) = socket.send(Message::Text(json)).await {
+                                tracing::warn!("Failed to push ACP terminal event: {e}");
+                                break;
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+            // Worktree file change event from broadcast
+            worktree_event = worktree_rx.recv() => {
+                match worktree_event {
+                    Ok(json) => {
+                        if let Err(e) = socket.send(Message::Text(json)).await {
+                            tracing::warn!("Failed to push worktree event: {e}");
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
         }
     }
 }
@@ -128,6 +237,36 @@ async fn handle_message(text: &str, app: &App) -> Value {
         "workspace_open" => handlers::handle_workspace_open(&state, &request.params),
         "workspace_expand" => handlers::handle_workspace_expand(&state, &request.params),
 
+        // Terminal methods (sync, use TerminalManager in AppState)
+        "terminal_spawn" => handlers::handle_terminal_spawn(&state, &request.params),
+        "terminal_write" => handlers::handle_terminal_write(&state, &request.params),
+        "terminal_resize" => handlers::handle_terminal_resize(&state, &request.params),
+        "terminal_kill" => handlers::handle_terminal_kill(&state, &request.params),
+        "terminal_info" => handlers::handle_terminal_info(&state, &request.params),
+        "get_default_shell" => handlers::handle_get_default_shell(&state, &request.params),
+        "get_available_shells" => handlers::handle_get_available_shells(&state, &request.params),
+
+        // ACP methods
+        "acp_spawn" => handlers::handle_acp_spawn(&state, &request.params).await,
+        "acp_relay" => handlers::handle_acp_relay(&state, &request.params).await,
+        "acp_send" => handlers::handle_acp_send(&state, &request.params).await,
+        "acp_kill" => handlers::handle_acp_kill(&state, &request.params).await,
+        "acp_read_file" => handlers::handle_acp_read_file(&state, &request.params).await,
+        "acp_write_file" => handlers::handle_acp_write_file(&state, &request.params).await,
+
+        // ACP terminal methods
+        "acp_create_terminal" => handlers::handle_acp_create_terminal(&state, &request.params).await,
+        "acp_terminal_output" => handlers::handle_acp_terminal_output(&state, &request.params).await,
+        "acp_wait_for_terminal_exit" => handlers::handle_acp_wait_for_terminal_exit(&state, &request.params).await,
+        "acp_kill_terminal" => handlers::handle_acp_kill_terminal(&state, &request.params).await,
+        "acp_release_terminal" => handlers::handle_acp_release_terminal(&state, &request.params).await,
+        "acp_terminal_write_input" => handlers::handle_acp_terminal_write_input(&state, &request.params).await,
+        "acp_terminal_resize" => handlers::handle_acp_terminal_resize(&state, &request.params).await,
+
+        // Worktree state methods
+        "get_file_before_content" => handlers::handle_get_file_before_content(&state, &request.params).await,
+        "get_file_change" => handlers::handle_get_file_change(&state, &request.params).await,
+
         unknown => Err(format!("unknown method: {unknown}")),
     };
 
@@ -148,7 +287,7 @@ async fn handle_message(text: &str, app: &App) -> Value {
 /// Serve embedded frontend assets.
 async fn serve_embedded(uri: axum::http::Uri) -> Response<Body> {
     let mut path = uri.path().trim_start_matches('/').to_string();
-    
+
     if path.is_empty() {
         path = "index.html".to_string();
     }
@@ -156,7 +295,7 @@ async fn serve_embedded(uri: axum::http::Uri) -> Response<Body> {
     // Handle SPA routes: if path has no extension and isn't a known asset, serve index.html
     let has_extension = path.contains('.');
     let is_known_asset = path.starts_with("assets/") || path == "index.html" || path == "vite.svg" || path == "tauri.svg";
-    
+
     if !has_extension && !is_known_asset {
         path = "index.html".to_string();
     }
@@ -191,6 +330,38 @@ async fn serve_embedded(uri: axum::http::Uri) -> Response<Body> {
                 }
                 None => StatusCode::NOT_FOUND.into_response(),
             }
+        }
+    }
+}
+
+/// Background task: reads from crossbeam channel, broadcasts as JSON to all clients.
+pub async fn terminal_event_bridge(
+    rx: crossbeam::channel::Receiver<TerminalEvent>,
+    tx: broadcast::Sender<String>,
+) {
+    loop {
+        match rx.recv() {
+            Ok(event) => {
+                let notification = match event {
+                    TerminalEvent::Data { id, text } => WsNotification {
+                        method: "terminal-data".into(),
+                        params: serde_json::json!({ "id": id.0, "data": text }),
+                    },
+                    TerminalEvent::Exit { id, exit_code } => WsNotification {
+                        method: "terminal-exit".into(),
+                        params: serde_json::json!({ "id": id.0, "exit_code": exit_code }),
+                    },
+                    TerminalEvent::Started { id, shell, pid, cwd } => WsNotification {
+                        method: "terminal-started".into(),
+                        params: serde_json::json!({ "id": id.0, "shell": shell, "pid": pid, "cwd": cwd }),
+                    },
+                };
+                if let Ok(json) = serde_json::to_string(&notification) {
+                    // Send to all subscribers; ignore if no subscribers
+                    let _ = tx.send(json);
+                }
+            }
+            Err(crossbeam::channel::RecvError) => break,
         }
     }
 }

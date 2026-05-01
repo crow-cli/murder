@@ -4,6 +4,8 @@ import * as monaco from "monaco-editor";
 interface EditorPaneProps {
   path: string;
   language: string;
+  readOnly?: boolean;
+  height?: number;
   onCursorChange?: (line: number, col: number) => void;
   onDirtyChange?: (dirty: boolean) => void;
 }
@@ -27,7 +29,7 @@ const COLORS = {
 const modelRegistry = new Map<string, monaco.editor.ITextModel>();
 
 const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
-  function EditorPane({ path, language, onCursorChange, onDirtyChange }, ref) {
+  function EditorPane({ path, language, readOnly, height, onCursorChange, onDirtyChange }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
     const onSaveCallbacks = useRef<(() => void)[]>([]);
@@ -93,25 +95,26 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
         language,
         theme: "murder-dark",
         automaticLayout: true,
-        minimap: { enabled: false },
-        fontSize: 14,
+        readOnly: readOnly || false,
+        minimap: { enabled: !readOnly },
+        fontSize: readOnly ? 12 : 14,
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-        lineNumbers: "on",
+        lineNumbers: readOnly ? "off" : "on",
         renderWhitespace: "selection",
         bracketPairColorization: { enabled: true },
         guides: { bracketPairs: true, indentation: true },
-        scrollBeyondLastLine: true,
+        scrollBeyondLastLine: !readOnly,
         smoothScrolling: false,
-        cursorBlinking: "smooth",
+        cursorBlinking: readOnly ? "solid" : "smooth",
         cursorSmoothCaretAnimation: "off",
-        cursorStyle: "line",
+        cursorStyle: readOnly ? "line-thin" : "line",
         cursorWidth: 2,
-        links: true,
-        folding: true,
+        links: !readOnly,
+        folding: !readOnly,
         foldingStrategy: "indentation",
         stickyScroll: { enabled: false },
         padding: { top: 8, bottom: 8 },
-        suggest: { showStatusBar: true },
+        suggest: { showStatusBar: !readOnly },
       });
 
       editorRef.current = editor;
@@ -178,7 +181,7 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
       return () => disposable.dispose();
     }, [path, language]);
 
-    return <div ref={containerRef} style={{ flex: 1, overflow: "hidden" }} />;
+    return <div ref={containerRef} style={{ flex: 1, overflow: "hidden", ...(height ? { height } : {}) }} />;
   },
 );
 

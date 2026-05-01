@@ -1,4 +1,11 @@
-export type ActivityId = "explorer" | "search" | "git" | "terminal" | "extensions";
+export type ActivityId =
+  | "chat"
+  | "explorer"
+  | "search"
+  | "git"
+  | "terminal"
+  | "extensions"
+  | "rpc";
 
 interface ActivityBarProps {
   active: ActivityId;
@@ -13,11 +20,13 @@ interface ActivityDef {
 }
 
 const ACTIVITIES: ActivityDef[] = [
+  { id: "chat", icon: "💬", label: "Agent Chat" },
   { id: "explorer", icon: "📁", label: "Explorer" },
-  { id: "search", icon: "", label: "Search" },
+  { id: "search", icon: "🔍", label: "Search" },
   { id: "git", icon: "⑂", label: "Source Control" },
   { id: "terminal", icon: "⌘", label: "Terminal" },
   { id: "extensions", icon: "⧉", label: "Extensions" },
+  { id: "rpc", icon: "📟", label: "RPC Log" },
 ];
 
 const COLORS = {
@@ -40,7 +49,10 @@ export function ActivityBar({ active, onActivate }: ActivityBarProps) {
             style={{
               ...styles.icon,
               background: active === a.id ? COLORS.hover : "transparent",
-              borderLeft: active === a.id ? `2px solid ${COLORS.active}` : "2px solid transparent",
+              borderLeft:
+                active === a.id
+                  ? `2px solid ${COLORS.active}`
+                  : "2px solid transparent",
               opacity: active === a.id ? 1 : 0.5,
             }}
           >

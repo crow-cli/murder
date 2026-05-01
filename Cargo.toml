@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "backend/crates/murder-text",
   "backend/crates/murder-workspace",
+  "backend/crates/murder-acp",
   "backend/crates/murder-lsp",
   "backend/crates/murder-syntax",
   "backend/crates/murder-git",
@@ -34,6 +35,7 @@ murder-theme = { path = "backend/crates/murder-theme" }
 murder-textmate = { path = "backend/crates/murder-textmate" }
 murder-db = { path = "backend/crates/murder-db" }
 murder-server = { path = "backend/crates/murder-server" }
+murder-acp = { path = "backend/crates/murder-acp" }
 
 # Core
 tokio = { version = "1", features = ["full"] }

@@ -20,6 +20,7 @@ dashmap = { workspace = true }
 rayon = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+parking_lot = { workspace = true }
 log = "0.4"
 pathdiff = "0.2"
 glob = "0.3"

@@ -5,15 +5,26 @@ import EditorPane, {
   disposeModel,
 } from "./components/EditorPane";
 import ExplorerPane from "./components/ExplorerPane";
+import ChatPane from "./components/ChatPane";
+import RpcLogPanel from "./components/RpcLogPanel";
 import { FolderPicker } from "./components/FolderPicker";
 import { ActivityBar, type ActivityId } from "./components/ActivityBar";
 import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
 import { MenuBar, type MenuGroup } from "./components/MenuBar";
+import TerminalPane from "./components/TerminalPane";
 import { ws } from "./lib/ws-client";
 import { getFileIcon } from "./lib/file-icons";
+import type { AgentConfig } from "./lib/acp-client";
+import * as acpStore from "./lib/acp-store";
 
-export { getFileIcon };
+/** Default fallback if config file fails to load */
+const FALLBACK_AGENT_CONFIG: AgentConfig = {
+  name: "crow-cli",
+  command: "crow-cli",
+  args: ["acp"],
+  env: [],
+};
 
 interface FileNode {
   name: string;
@@ -22,7 +33,6 @@ interface FileNode {
   children?: FileNode[];
 }
 
-/** Minimal open file tracking — content lives in Monaco models, not React state */
 interface OpenFile {
   path: string;
   language: string;
@@ -36,14 +46,24 @@ export default function App() {
   const [dirtyFiles, setDirtyFiles] = useState<Set<string>>(new Set());
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activeActivity, setActiveActivity] = useState<ActivityId>("explorer");
+  const [activeActivity, setActiveActivity] = useState<ActivityId>("chat");
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [_menuOpen, setMenuOpen] = useState<string | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
   const [cursorCol, setCursorCol] = useState(1);
+  const [terminalVisible, setTerminalVisible] = useState(false);
+  const [chatVisible, setChatVisible] = useState(true);
+  const [agentConfig, setAgentConfig] = useState<AgentConfig>(FALLBACK_AGENT_CONFIG);
 
-  // Refs for stable access inside closures/event handlers
+  // Load agent config from JSON file
+  useEffect(() => {
+    fetch("/agent-config.json")
+      .then(r => r.json())
+      .then(setAgentConfig)
+      .catch(() => {});
+  }, []);
+
   const activeFileRef = useRef(activeFile);
   const dirtyFilesRef = useRef(dirtyFiles);
   const openFilesRef = useRef(openFiles);
@@ -75,36 +95,21 @@ export default function App() {
     return () => ws.disconnect();
   }, []);
 
-  // Listen for Ctrl+S from Monaco editor
-  useEffect(() => {
-    const handler = (e: CustomEvent) => {
-      const path = e.detail.path as string;
-      if (path) saveFile(path);
-    };
-    window.addEventListener("editor-save", handler as EventListener);
-    return () =>
-      window.removeEventListener("editor-save", handler as EventListener);
-  }, []);
-
   // Show notification briefly
   const notify = useCallback((msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(null), 2500);
   }, []);
 
-  // Save file — reads content DIRECTLY from Monaco model, no React state lag
+  // Save file
   const saveFile = useCallback(
     async (path: string) => {
       if (savingRef.current) return;
       setSaving(true);
       try {
-        // Read content directly from the Monaco model — always fresh
         const content = editorRef.current?.getContent() ?? "";
-
-        // Sync to backend model, then write to disk
         await ws.invoke("document_set_content", { path, content });
         await ws.invoke("document_save", { path });
-
         setDirtyFiles((prev) => {
           const next = new Set(prev);
           next.delete(path);
@@ -120,11 +125,10 @@ export default function App() {
     [notify],
   );
 
-  // Close tab — dispose Monaco model, clean up state
+  // Close tab
   const closeTab = useCallback((path: string) => {
     disposeModel(path);
     ws.invoke("document_close", { path }).catch(console.error);
-
     setOpenFiles((prev) => {
       const next = new Map(prev);
       next.delete(path);
@@ -135,7 +139,6 @@ export default function App() {
       next.delete(path);
       return next;
     });
-
     const remaining = Array.from(openFilesRef.current.keys()).filter(
       (p) => p !== path,
     );
@@ -159,7 +162,6 @@ export default function App() {
         setShowFolderPicker(true);
         return;
       }
-
       if (ctrl && e.key === "s" && !isInput) {
         e.preventDefault();
         e.stopPropagation();
@@ -167,7 +169,6 @@ export default function App() {
         if (af) saveFile(af);
         return;
       }
-
       if (ctrl && e.key === "w" && !isInput) {
         e.preventDefault();
         e.stopPropagation();
@@ -175,14 +176,33 @@ export default function App() {
         if (af) closeTab(af);
         return;
       }
-
       if (ctrl && e.key === "b" && !isInput) {
         e.preventDefault();
         e.stopPropagation();
         setSidebarVisible((v) => !v);
         return;
       }
-
+      if (ctrl && e.key === "`" && !isInput) {
+        e.preventDefault();
+        e.stopPropagation();
+        setTerminalVisible((v) => !v);
+        return;
+      }
+      if (ctrl && e.key === "l" && !isInput) {
+        e.preventDefault();
+        e.stopPropagation();
+        setActiveActivity("chat");
+        setChatVisible(true);
+        setSidebarVisible(true);
+        return;
+      }
+      if (ctrl && e.shiftKey && e.key === "R" && !isInput) {
+        e.preventDefault();
+        e.stopPropagation();
+        setActiveActivity("rpc");
+        setSidebarVisible(true);
+        return;
+      }
       if (e.key === "Escape") {
         setMenuOpen(null);
         setShowFolderPicker(false);
@@ -201,6 +221,8 @@ export default function App() {
       setActiveFile(null);
       setDirtyFiles(new Set());
       notify(`Opened ${path.split("/").pop()}`);
+      // Initialize persistent ACP client
+      acpStore.initialize(agentConfig, path);
     } catch (e: any) {
       notify(`Failed to open: ${e.message || e}`);
     }
@@ -218,13 +240,8 @@ export default function App() {
       });
       const content = result.content;
       const language = getLanguage(path);
-
-      // Register with backend document store
       await ws.invoke("document_open", { path, content });
-
-      // Populate Monaco model with content
       setModelContent(path, content, language);
-
       setOpenFiles((prev) => new Map(prev).set(path, { path, language }));
       setActiveFile(path);
     } catch (e: any) {
@@ -240,12 +257,21 @@ export default function App() {
   const handleDirtyChange = useCallback((dirty: boolean) => {
     const af = activeFileRef.current;
     if (!af) return;
-    if (dirty) {
-      setDirtyFiles((prev) => new Set(prev).add(af));
-    }
+    if (dirty) setDirtyFiles((prev) => new Set(prev).add(af));
   }, []);
 
-  // Menu actions
+  // Agent file change handler — update explorer/monaco when agent writes files
+  const handleAgentFileChange = useCallback((path: string, content: string) => {
+    // If file is open in editor, update the model
+    setModelContent(path, content, getLanguage(path));
+    // Clear dirty flag since agent wrote it
+    setDirtyFiles((prev) => {
+      const next = new Set(prev);
+      next.delete(path);
+      return next;
+    });
+  }, []);
+
   const handleMenuAction = useCallback(
     (action: string) => {
       switch (action) {
@@ -258,9 +284,7 @@ export default function App() {
           break;
         }
         case "save_all": {
-          for (const path of dirtyFilesRef.current) {
-            saveFile(path);
-          }
+          for (const path of dirtyFilesRef.current) saveFile(path);
           break;
         }
         case "close_editor": {
@@ -270,6 +294,9 @@ export default function App() {
         }
         case "toggle_sidebar":
           setSidebarVisible((v) => !v);
+          break;
+        case "toggle_terminal":
+          setTerminalVisible((v) => !v);
           break;
         case "explorer":
           setActiveActivity("explorer");
@@ -284,11 +311,23 @@ export default function App() {
           setSidebarVisible(true);
           break;
         case "terminal":
-          setActiveActivity("terminal");
-          setSidebarVisible(true);
+          setTerminalVisible(true);
+          break;
+        case "new_terminal":
+          setTerminalVisible(true);
+          notify("Terminal panel");
           break;
         case "extensions":
           setActiveActivity("extensions");
+          setSidebarVisible(true);
+          break;
+        case "chat":
+          setActiveActivity("chat");
+          setChatVisible(true);
+          setSidebarVisible(true);
+          break;
+        case "rpc_log":
+          setActiveActivity("rpc");
           setSidebarVisible(true);
           break;
       }
@@ -298,6 +337,16 @@ export default function App() {
 
   const currentFile = activeFile ? openFiles.get(activeFile) : null;
   const openFilesList = Array.from(openFiles.values());
+
+  // Determine which side panels are visible
+  const showLeftPanel = chatVisible && activeActivity === "chat";
+  const showRightPanel =
+    sidebarVisible &&
+    (activeActivity === "explorer" ||
+      activeActivity === "search" ||
+      activeActivity === "git" ||
+      activeActivity === "extensions" ||
+      activeActivity === "rpc");
 
   const menuItems: MenuGroup[] = [
     {
@@ -340,6 +389,7 @@ export default function App() {
     {
       label: "View",
       items: [
+        { label: "Agent Chat", action: "chat", shortcut: "Ctrl+L" },
         { label: "Explorer", action: "explorer", shortcut: "Ctrl+Shift+E" },
         { label: "Search", action: "search", shortcut: "Ctrl+Shift+F" },
         {
@@ -349,11 +399,17 @@ export default function App() {
         },
         { label: "Terminal", action: "terminal", shortcut: "Ctrl+`" },
         { label: "Extensions", action: "extensions", shortcut: "Ctrl+Shift+X" },
+        { label: "RPC Log", action: "rpc_log", shortcut: "Ctrl+Shift+R" },
         { separator: true },
         {
           label: "Toggle Sidebar",
           action: "toggle_sidebar",
           shortcut: "Ctrl+B",
+        },
+        {
+          label: "Toggle Terminal",
+          action: "toggle_terminal",
+          shortcut: "Ctrl+`",
         },
       ],
     },
@@ -408,44 +464,371 @@ export default function App() {
     },
   ];
 
+  const COLORS = {
+    bg: "#1a1230",
+    bgDark: "#14101f",
+    bgLight: "#1e1640",
+    bgLighter: "#251d4a",
+    border: "#2d2350",
+    borderLight: "#3a2d60",
+    text: "#d4c4ff",
+    textMuted: "#8b7bb5",
+    textDim: "#5a4d80",
+    accent: "#4ade80",
+    accentDim: "#36a860",
+    accentBg: "#4ade8022",
+    danger: "#f87171",
+  };
+
   return (
-    <div style={styles.root}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100vh",
+        background: COLORS.bg,
+        color: COLORS.text,
+        fontFamily:
+          "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        fontSize: 13,
+        overflow: "hidden",
+        userSelect: "none",
+      }}
+    >
       <MenuBar
         items={menuItems}
         onAction={handleMenuAction}
         onOpenChange={setMenuOpen}
       />
 
-      <div style={styles.mainArea}>
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <ActivityBar
           active={activeActivity}
           onActivate={(id) => {
-            if (id === activeActivity) setSidebarVisible((v) => !v);
-            else {
+            if (id === activeActivity) {
+              // Toggle visibility
+              if (id === "chat") setChatVisible((v) => !v);
+              else setSidebarVisible((v) => !v);
+            } else {
               setActiveActivity(id);
-              setSidebarVisible(true);
+              if (id === "chat") setChatVisible(true);
+              else setSidebarVisible(true);
             }
           }}
         />
 
-        {sidebarVisible && (
-          <div style={styles.sidebar}>
-            <div style={styles.sidebarHeader}>
-              <span style={styles.sidebarTitle}>
+        {/* LEFT PANEL: Chat */}
+        {showLeftPanel && (
+          <div
+            style={{
+              width: 380,
+              minWidth: 280,
+              maxWidth: 600,
+              background: COLORS.bgDark,
+              borderRight: `1px solid ${COLORS.border}`,
+              display: "flex",
+              flexDirection: "column",
+              flexShrink: 0,
+            }}
+          >
+            <div
+              style={{
+                height: 35,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "0 12px",
+                borderBottom: `1px solid ${COLORS.border}`,
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.5,
+                  color: COLORS.textMuted,
+                }}
+              >
+                Agent Chat
+              </span>
+              <button
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: COLORS.textMuted,
+                  cursor: "pointer",
+                  fontSize: 18,
+                  lineHeight: 1,
+                  padding: "0 4px",
+                }}
+                onClick={() => setChatVisible(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: "hidden" }}>
+              {workspaceRoot ? (
+                <ChatPane
+                  onClose={() => setChatVisible(false)}
+                  onFileChanged={handleAgentFileChange}
+                />
+              ) : (
+                <div
+                  style={{
+                    padding: 16,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ fontSize: 13, opacity: 0.5 }}>
+                    Open a folder first
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* CENTER: Editor + Terminal */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
+            <TabBar
+              openFiles={openFilesList}
+              activePath={activeFile}
+              dirtyFiles={dirtyFiles}
+              onTabClick={setActiveFile}
+              onTabClose={closeTab}
+            />
+
+            {currentFile ? (
+              <EditorPane
+                ref={editorRef}
+                path={currentFile.path}
+                language={currentFile.language}
+                onCursorChange={handleCursorChange}
+                onDirtyChange={handleDirtyChange}
+              />
+            ) : (
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 24,
+                  opacity: 0.6,
+                }}
+              >
+                <div
+                  style={{ fontSize: 64, color: COLORS.accent, lineHeight: 1 }}
+                >
+                  ◆
+                </div>
+                <div
+                  style={{
+                    fontSize: 28,
+                    fontWeight: 300,
+                    color: COLORS.textMuted,
+                  }}
+                >
+                  Welcome
+                </div>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button
+                    style={{
+                      padding: "10px 24px",
+                      background: "transparent",
+                      border: `1px solid ${COLORS.borderLight}`,
+                      borderRadius: 6,
+                      color: COLORS.text,
+                      cursor: "pointer",
+                      fontSize: 13,
+                      fontWeight: 500,
+                    }}
+                    onClick={() => setShowFolderPicker(true)}
+                  >
+                    Open Folder
+                  </button>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    fontSize: 12,
+                    color: COLORS.textMuted,
+                  }}
+                >
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    <kbd style={kbdStyle}>Ctrl+O</kbd> Open Folder
+                  </div>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    <kbd style={kbdStyle}>Ctrl+L</kbd> Agent Chat
+                  </div>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    <kbd style={kbdStyle}>Ctrl+B</kbd> Toggle Sidebar
+                  </div>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    <kbd style={kbdStyle}>Ctrl+`</kbd> Toggle Terminal
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {terminalVisible && (
+            <div
+              style={{
+                height: 220,
+                minHeight: 100,
+                borderTop: `1px solid ${COLORS.border}`,
+                display: "flex",
+                flexDirection: "column",
+                flexShrink: 0,
+                background: COLORS.bgDark,
+              }}
+            >
+              <div
+                style={{
+                  height: 30,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "0 12px",
+                  borderBottom: `1px solid ${COLORS.border}`,
+                  flexShrink: 0,
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.5,
+                    color: COLORS.textMuted,
+                  }}
+                >
+                  TERMINAL
+                </span>
+                <button
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: COLORS.textMuted,
+                    cursor: "pointer",
+                    fontSize: 18,
+                    lineHeight: 1,
+                    padding: "0 4px",
+                  }}
+                  onClick={() => setTerminalVisible(false)}
+                >
+                  ×
+                </button>
+              </div>
+              <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
+                {workspaceRoot ? (
+                  <TerminalPane workspaceRoot={workspaceRoot} />
+                ) : (
+                  <div
+                    style={{
+                      padding: 16,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ fontSize: 13, opacity: 0.5 }}>
+                      Open a folder first to use the terminal
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT PANEL: Explorer */}
+        {showRightPanel && (
+          <div
+            style={{
+              width: 260,
+              background: COLORS.bgDark,
+              borderLeft: `1px solid ${COLORS.border}`,
+              display: "flex",
+              flexDirection: "column",
+              flexShrink: 0,
+            }}
+          >
+            <div
+              style={{
+                height: 35,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "0 12px",
+                borderBottom: `1px solid ${COLORS.border}`,
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.5,
+                  color: COLORS.textMuted,
+                }}
+              >
                 {activeActivity === "explorer" && "Explorer"}
                 {activeActivity === "search" && "Search"}
                 {activeActivity === "git" && "Source Control"}
-                {activeActivity === "terminal" && "Terminal"}
                 {activeActivity === "extensions" && "Extensions"}
+                {activeActivity === "rpc" && "RPC Log"}
               </span>
               <button
-                style={styles.sidebarClose}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: COLORS.textMuted,
+                  cursor: "pointer",
+                  fontSize: 18,
+                  lineHeight: 1,
+                  padding: "0 4px",
+                }}
                 onClick={() => setSidebarVisible(false)}
               >
                 ×
               </button>
             </div>
-            <div style={styles.sidebarContent}>
+            <div style={{ flex: 1, overflow: "auto" }}>
               {activeActivity === "explorer" && workspaceRoot && (
                 <ExplorerPane
                   root={workspaceRoot}
@@ -453,26 +836,74 @@ export default function App() {
                 />
               )}
               {activeActivity === "explorer" && !workspaceRoot && (
-                <div style={styles.emptyState}>
+                <div
+                  style={{
+                    padding: 16,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
                   <button
-                    style={styles.openFolderBtn}
+                    style={{
+                      padding: "8px 20px",
+                      background: COLORS.accent,
+                      color: "#0d1f17",
+                      border: "none",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                      fontWeight: 600,
+                      fontSize: 12,
+                    }}
                     onClick={() => setShowFolderPicker(true)}
                   >
                     Open Folder
                   </button>
-                  <div style={styles.emptyHint}>or press Ctrl+O</div>
+                  <div style={{ fontSize: 11, color: COLORS.textDim }}>
+                    or press Ctrl+O
+                  </div>
                 </div>
               )}
               {activeActivity === "search" && (
-                <div style={styles.emptyState}>
+                <div
+                  style={{
+                    padding: 16,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
                   <div style={{ fontSize: 13, opacity: 0.5 }}>
                     Search in files
                   </div>
-                  <input style={styles.searchInput} placeholder="Search" />
+                  <input
+                    style={{
+                      width: "100%",
+                      padding: "6px 10px",
+                      fontSize: 12,
+                      background: COLORS.bgLighter,
+                      border: `1px solid ${COLORS.border}`,
+                      borderRadius: 3,
+                      color: COLORS.text,
+                      outline: "none",
+                      boxSizing: "border-box",
+                    }}
+                    placeholder="Search"
+                  />
                 </div>
               )}
               {activeActivity === "git" && (
-                <div style={styles.emptyState}>
+                <div
+                  style={{
+                    padding: 16,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
                   <div style={{ fontSize: 13, opacity: 0.5 }}>
                     Source Control
                   </div>
@@ -483,69 +914,26 @@ export default function App() {
                   </div>
                 </div>
               )}
-              {activeActivity === "terminal" && (
-                <div style={styles.emptyState}>
-                  <div style={{ fontSize: 13, opacity: 0.5 }}>Terminal</div>
-                  <div style={{ fontSize: 11, opacity: 0.3, marginTop: 8 }}>
-                    Terminal panel coming soon
-                  </div>
-                </div>
-              )}
               {activeActivity === "extensions" && (
-                <div style={styles.emptyState}>
+                <div
+                  style={{
+                    padding: 16,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
                   <div style={{ fontSize: 13, opacity: 0.5 }}>Extensions</div>
                   <div style={{ fontSize: 11, opacity: 0.3, marginTop: 8 }}>
                     Extension marketplace coming soon
                   </div>
                 </div>
               )}
+              {activeActivity === "rpc" && <RpcLogPanel />}
             </div>
           </div>
         )}
-
-        <div style={styles.editorArea}>
-          <TabBar
-            openFiles={openFilesList}
-            activePath={activeFile}
-            dirtyFiles={dirtyFiles}
-            onTabClick={setActiveFile}
-            onTabClose={closeTab}
-          />
-
-          {currentFile ? (
-            <EditorPane
-              ref={editorRef}
-              path={currentFile.path}
-              language={currentFile.language}
-              onCursorChange={handleCursorChange}
-              onDirtyChange={handleDirtyChange}
-            />
-          ) : (
-            <div style={styles.welcomeScreen}>
-              <div style={styles.welcomeLogo}>◆</div>
-              <div style={styles.welcomeTitle}>Welcome</div>
-              <div style={styles.welcomeActions}>
-                <button
-                  style={styles.welcomeBtn}
-                  onClick={() => setShowFolderPicker(true)}
-                >
-                  Open Folder
-                </button>
-              </div>
-              <div style={styles.welcomeShortcuts}>
-                <div style={styles.welcomeShortcut}>
-                  <kbd style={styles.kbd}>Ctrl+O</kbd> Open Folder
-                </div>
-                <div style={styles.welcomeShortcut}>
-                  <kbd style={styles.kbd}>Ctrl+P</kbd> Quick Open
-                </div>
-                <div style={styles.welcomeShortcut}>
-                  <kbd style={styles.kbd}>Ctrl+B</kbd> Toggle Sidebar
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
 
       <StatusBar
@@ -567,7 +955,26 @@ export default function App() {
         />
       )}
 
-      {notification && <div style={styles.notification}>{notification}</div>}
+      {notification && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 32,
+            left: "50%",
+            transform: "translateX(-50%)",
+            padding: "8px 16px",
+            background: COLORS.accent,
+            color: "#0d1f17",
+            borderRadius: 4,
+            fontSize: 12,
+            fontWeight: 600,
+            zIndex: 2000,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+          }}
+        >
+          {notification}
+        </div>
+      )}
     </div>
   );
 }
@@ -598,161 +1005,12 @@ function getLanguage(path: string): string {
   return map[ext] || "plaintext";
 }
 
-const COLORS = {
-  bg: "#1a1230",
-  bgDark: "#14101f",
-  bgLight: "#1e1640",
-  bgLighter: "#251d4a",
-  border: "#2d2350",
-  borderLight: "#3a2d60",
-  text: "#d4c4ff",
-  textMuted: "#8b7bb5",
-  textDim: "#5a4d80",
-  accent: "#4ade80",
-  accentDim: "#36a860",
-  accentBg: "#4ade8022",
-  danger: "#f87171",
-  tabActive: "#1e1640",
-  tabInactive: "#14101f",
-  statusBg: "#0d7a3e",
-  statusBgNoFolder: "#3b2d5a",
-  menuHover: "#2d2350",
-};
-
-const styles: Record<string, React.CSSProperties> = {
-  root: {
-    display: "flex",
-    flexDirection: "column",
-    height: "100vh",
-    background: COLORS.bg,
-    color: COLORS.text,
-    fontFamily:
-      "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    fontSize: 13,
-    overflow: "hidden",
-    userSelect: "none",
-  },
-  mainArea: { display: "flex", flex: 1, overflow: "hidden" },
-  sidebar: {
-    width: 260,
-    background: COLORS.bgDark,
-    borderRight: `1px solid ${COLORS.border}`,
-    display: "flex",
-    flexDirection: "column",
-    flexShrink: 0,
-  },
-  sidebarHeader: {
-    height: 35,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "0 12px",
-    borderBottom: `1px solid ${COLORS.border}`,
-    flexShrink: 0,
-  },
-  sidebarTitle: {
-    fontSize: 11,
-    fontWeight: 600,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    color: COLORS.textMuted,
-  },
-  sidebarClose: {
-    background: "none",
-    border: "none",
-    color: COLORS.textMuted,
-    cursor: "pointer",
-    fontSize: 18,
-    lineHeight: 1,
-    padding: "0 4px",
-  },
-  sidebarContent: { flex: 1, overflow: "auto" },
-  editorArea: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-  },
-  emptyState: {
-    padding: 16,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 8,
-  },
-  openFolderBtn: {
-    padding: "8px 20px",
-    background: COLORS.accent,
-    color: "#0d1f17",
-    border: "none",
-    borderRadius: 4,
-    cursor: "pointer",
-    fontWeight: 600,
-    fontSize: 12,
-  },
-  emptyHint: { fontSize: 11, color: COLORS.textDim },
-  searchInput: {
-    width: "100%",
-    padding: "6px 10px",
-    fontSize: 12,
-    background: COLORS.bgLighter,
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 3,
-    color: COLORS.text,
-    outline: "none",
-    boxSizing: "border-box",
-  },
-  welcomeScreen: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 24,
-    opacity: 0.6,
-  },
-  welcomeLogo: { fontSize: 64, color: COLORS.accent, lineHeight: 1 },
-  welcomeTitle: { fontSize: 28, fontWeight: 300, color: COLORS.textMuted },
-  welcomeActions: { display: "flex", gap: 12 },
-  welcomeBtn: {
-    padding: "10px 24px",
-    background: "transparent",
-    border: `1px solid ${COLORS.borderLight}`,
-    borderRadius: 6,
-    color: COLORS.text,
-    cursor: "pointer",
-    fontSize: 13,
-    fontWeight: 500,
-  },
-  welcomeShortcuts: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-    fontSize: 12,
-    color: COLORS.textMuted,
-  },
-  welcomeShortcut: { display: "flex", alignItems: "center", gap: 8 },
-  kbd: {
-    padding: "2px 6px",
-    background: COLORS.bgLighter,
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 3,
-    fontSize: 11,
-    fontFamily: "monospace",
-    color: COLORS.accent,
-  },
-  notification: {
-    position: "fixed",
-    bottom: 32,
-    left: "50%",
-    transform: "translateX(-50%)",
-    padding: "8px 16px",
-    background: COLORS.accent,
-    color: "#0d1f17",
-    borderRadius: 4,
-    fontSize: 12,
-    fontWeight: 600,
-    zIndex: 2000,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-  },
+const kbdStyle: React.CSSProperties = {
+  padding: "2px 6px",
+  background: "#251d4a",
+  border: "1px solid #2d2350",
+  borderRadius: 3,
+  fontSize: 11,
+  fontFamily: "monospace",
+  color: "#4ade80",
 };

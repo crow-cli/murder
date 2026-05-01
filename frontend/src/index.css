@@ -59,3 +59,23 @@ textarea {
 ::selection {
     background: #4ade8033;
 }
+
+/* Chat panel: Monaco editors inside the chat should not have their own scrollbars.
+   The parent chat container handles scrolling instead. Monaco editors are
+   already height-capped (maxHeight 300/400) so content is clipped. */
+.chat-messages .monaco-editor .overflow-guard {
+    overflow: hidden !important;
+}
+.chat-messages .monaco-diff-editor .overflow-guard {
+    overflow: hidden !important;
+}
+.chat-messages .monaco-editor .scrollable {
+    overflow: hidden !important;
+}
+.chat-messages .monaco-diff-editor .scrollable {
+    overflow: hidden !important;
+}
+.chat-messages .monaco-editor .monaco-scrollable-element .scrollbar,
+.chat-messages .monaco-diff-editor .monaco-scrollable-element .scrollbar {
+    display: none !important;
+}

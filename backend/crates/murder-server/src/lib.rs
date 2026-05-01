@@ -8,5 +8,5 @@ mod router;
 mod state;
 mod handlers;
 
-pub use ws::run_server;
+pub use ws::{run_server, terminal_event_bridge};
 pub use state::AppState;

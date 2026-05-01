@@ -10,8 +10,22 @@ interface WsResponse {
   error?: string;
 }
 
+interface WsNotification {
+  method: string;
+  params: Record<string, unknown>;
+}
+
+export type TerminalEventHandler = (event: {
+  type: "data" | "exit" | "started";
+  id: number;
+  data?: string;
+  exitCode?: number;
+  shell?: string;
+  pid?: number;
+  cwd?: string;
+}) => void;
+
 export class WsClient {
-  private ws: WebSocket | null = null;
   private nextId = 1;
   private pending = new Map<
     number,
@@ -21,29 +35,32 @@ export class WsClient {
     }
   >();
   public connected = false;
+  public ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private terminalHandlers = new Set<TerminalEventHandler>();
 
   constructor(private url: string) {}
 
   connect(): Promise<void> {
-    console.log('[ws] Connecting to', this.url);
+    console.log("[ws] Connecting to", this.url);
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(this.url);
       this.ws.onopen = () => {
         this.connected = true;
-        console.log('[ws] Connected');
+        console.log("[ws] Connected");
         resolve();
       };
       this.ws.onclose = () => {
         this.connected = false;
-        console.log('[ws] Disconnected');
+        console.log("[ws] Disconnected");
         for (const [, { reject: rej }] of this.pending)
           rej("WebSocket disconnected");
         this.pending.clear();
         this.reconnectTimer = setTimeout(() => this.reconnect(), 2000);
       };
       this.ws.onmessage = (event) => {
-        const msg: WsResponse = JSON.parse(event.data);
+        const msg = JSON.parse(event.data);
+        // Response (has id)
         if (msg.id !== undefined) {
           const handler = this.pending.get(msg.id);
           if (handler) {
@@ -52,12 +69,45 @@ export class WsClient {
             else handler.resolve(msg.result);
           }
         }
+        // Notification (no id, has method)
+        else if (msg.method) {
+          this.handleNotification(msg);
+        }
       };
       this.ws.onerror = () => {
-        console.error('[ws] Connection error');
+        console.error("[ws] Connection error");
         reject(new Error("WebSocket connection failed"));
       };
     });
+  }
+
+  private handleNotification(msg: WsNotification) {
+    const { method, params } = msg;
+    if (method.startsWith("terminal-")) {
+      const type = method.replace("terminal-", "") as
+        | "data"
+        | "exit"
+        | "started";
+      const event = {
+        type,
+        id: params.id as number,
+        ...(type === "data" && { data: params.data as string }),
+        ...(type === "exit" && { exitCode: params.exit_code as number }),
+        ...(type === "started" && {
+          shell: params.shell as string,
+          pid: params.pid as number,
+          cwd: params.cwd as string,
+        }),
+      };
+      for (const handler of this.terminalHandlers) {
+        handler(event);
+      }
+    }
+  }
+
+  onTerminalEvent(handler: TerminalEventHandler): () => void {
+    this.terminalHandlers.add(handler);
+    return () => this.terminalHandlers.delete(handler);
   }
 
   private reconnect() {
@@ -73,9 +123,12 @@ export class WsClient {
     method: string,
     params: Record<string, unknown> = {},
   ): Promise<T> {
-    console.log('[ws] Invoking', method, params);
+    console.log("[ws] Invoking", method, params);
     if (!this.ws || !this.connected) {
-      console.error('[ws] Not connected!', { ws: !!this.ws, connected: this.connected });
+      console.error("[ws] Not connected!", {
+        ws: !!this.ws,
+        connected: this.connected,
+      });
       throw new Error("WebSocket not connected");
     }
     const id = this.nextId++;

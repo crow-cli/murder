@@ -34,12 +34,21 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
     loadDir(root);
   }, [root]);
 
+  const sortEntries = (items: FileEntry[]): FileEntry[] => {
+    return [...items].sort((a, b) => {
+      // Directories first
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      // Case-insensitive alphabetical
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    });
+  };
+
   const loadDir = async (path: string) => {
     try {
       const result = await ws.invoke<{ entries: FileEntry[] }>("read_dir", {
         path,
       });
-      setEntries(result.entries);
+      setEntries(sortEntries(result.entries));
     } catch (e) {
       console.error("Failed to read dir:", e);
     }
@@ -60,7 +69,7 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
           const result = await ws.invoke<{ entries: FileEntry[] }>("read_dir", {
             path,
           });
-          setChildCache((prev) => new Map(prev).set(path, result.entries));
+          setChildCache((prev) => new Map(prev).set(path, sortEntries(result.entries)));
         } catch (e) {
           console.error("Failed to expand:", e);
         }

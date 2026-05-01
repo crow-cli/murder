@@ -362,3 +362,384 @@ fn detect_language(path: &str) -> String {
         _ => "plaintext".into(),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Terminal handlers
+// ---------------------------------------------------------------------------
+
+pub fn handle_terminal_spawn(state: &AppState, params: &Value) -> Result<Value, String> {
+    let shell = params["shell"].as_str();
+    let cwd = params["cwd"].as_str();
+    let cols = params["cols"].as_u64().map(|v| v as u16).unwrap_or(80);
+    let rows = params["rows"].as_u64().map(|v| v as u16).unwrap_or(24);
+
+    let mut tm = state.terminals.lock();
+    let mut config = murder_terminal::PtySpawnConfig::default();
+    config.size = murder_terminal::TerminalSize { rows, cols };
+
+    if let Some(s) = shell {
+        config.shell = Some(s.to_string());
+    }
+
+    if let Some(c) = cwd {
+        if !c.is_empty() {
+            config.cwd = Some(std::path::PathBuf::from(c));
+        }
+    }
+
+    let id = tm.create_with_config(&config).map_err(|e| e.to_string())?;
+    Ok(json!({ "id": id }))
+}
+
+pub fn handle_terminal_write(state: &AppState, params: &Value) -> Result<Value, String> {
+    let id = params["id"].as_u64().ok_or("missing 'id'")? as u32;
+    let data = params["data"].as_str().ok_or("missing 'data'")?;
+    let tm = state.terminals.lock();
+    tm.write(murder_terminal::TerminalId(id), data)
+        .map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true }))
+}
+
+pub fn handle_terminal_resize(state: &AppState, params: &Value) -> Result<Value, String> {
+    let id = params["id"].as_u64().ok_or("missing 'id'")? as u32;
+    let cols = params["cols"].as_u64().ok_or("missing 'cols'")? as u16;
+    let rows = params["rows"].as_u64().ok_or("missing 'rows'")? as u16;
+    let tm = state.terminals.lock();
+    tm.resize(
+        murder_terminal::TerminalId(id),
+        murder_terminal::TerminalSize { rows, cols },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true }))
+}
+
+pub fn handle_terminal_kill(state: &AppState, params: &Value) -> Result<Value, String> {
+    let id = params["id"].as_u64().ok_or("missing 'id'")? as u32;
+    let mut tm = state.terminals.lock();
+    tm.close_terminal(id).map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true }))
+}
+
+pub fn handle_terminal_info(state: &AppState, params: &Value) -> Result<Value, String> {
+    let id = params["id"].as_u64().ok_or("missing 'id'")? as u32;
+    let tm = state.terminals.lock();
+    let info = tm
+        .info(murder_terminal::TerminalId(id))
+        .map_err(|e| e.to_string())?;
+    Ok(json!({
+        "id": info.handle.0,
+        "shell": info.shell,
+        "cwd": info.cwd,
+        "pid": info.pid,
+        "cols": info.cols,
+        "rows": info.rows,
+        "is_alive": info.is_alive,
+    }))
+}
+
+pub fn handle_get_default_shell(_state: &AppState, _params: &Value) -> Result<Value, String> {
+    let shell = murder_terminal::detect_default_shell();
+    Ok(json!({ "shell": shell }))
+}
+
+pub fn handle_get_available_shells(_state: &AppState, _params: &Value) -> Result<Value, String> {
+    let shells = murder_terminal::available_shells()
+        .into_iter()
+        .map(|s| json!({
+            "name": s.name,
+            "path": s.path,
+            "is_default": s.is_default,
+        }))
+        .collect::<Vec<_>>();
+    Ok(json!({ "shells": shells }))
+}
+
+// ---------------------------------------------------------------------------
+// ACP handlers
+// ---------------------------------------------------------------------------
+
+pub async fn handle_acp_relay(state: &AppState, params: &Value) -> Result<Value, String> {
+    let agent_id = params["agentId"].as_str().ok_or("missing 'agentId'")?;
+    let message = params["message"].as_str().ok_or("missing 'message'")?;
+
+    let stdin = state.agents.get_stdin(agent_id).await
+        .ok_or_else(|| format!("Agent not found: {agent_id}"))?;
+
+    stdin.send(message.to_string()).await
+        .map_err(|e| format!("Failed to send to agent: {e}"))?;
+
+    Ok(json!({ "success": true }))
+}
+
+pub async fn handle_acp_spawn(state: &AppState, params: &Value) -> Result<Value, String> {
+    let name = params["name"].as_str().ok_or("missing 'name'")?;
+    let command = params["command"].as_str().ok_or("missing 'command'")?;
+    let cwd = params["cwd"].as_str().unwrap_or(".");
+
+    let args = params["args"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let env = params["env"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let config = murder_acp::AgentConfig {
+        name: name.to_string(),
+        command: command.to_string(),
+        args,
+        env,
+    };
+
+    let agent_id = state.agents.spawn(&config, cwd).await
+        .map_err(|e| format!("Failed to spawn agent: {e}"))?;
+
+    Ok(json!({ "agentId": agent_id }))
+}
+
+pub async fn handle_acp_send(state: &AppState, params: &Value) -> Result<Value, String> {
+    let agent_id = params["agentId"].as_str().ok_or("missing 'agentId'")?;
+    let message = params["message"].as_str().ok_or("missing 'message'")?;
+
+    let stdin = state.agents.get_stdin(agent_id).await
+        .ok_or_else(|| format!("Agent not found: {agent_id}"))?;
+
+    stdin.send(message.to_string()).await
+        .map_err(|e| format!("Failed to send to agent: {e}"))?;
+
+    Ok(json!({ "success": true }))
+}
+
+pub async fn handle_acp_kill(state: &AppState, params: &Value) -> Result<Value, String> {
+    let agent_id = params["agentId"].as_str().ok_or("missing 'agentId'")?;
+    state.agents.kill(agent_id).await;
+    Ok(json!({ "success": true }))
+}
+
+pub async fn handle_acp_read_file(state: &AppState, params: &Value) -> Result<Value, String> {
+    let path = params["path"].as_str().ok_or("missing 'path'")?;
+
+    // Check if document is open (has unsaved changes)
+    let content = if let Some(entry) = state.documents.get(path) {
+        entry.value().get_full_content()
+    } else {
+        tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| format!("Failed to read file: {e}"))?
+    };
+
+    // Handle line/limit parameters
+    let content = if params["line"].is_number() || params["limit"].is_number() {
+        let start_line = params["line"].as_u64().unwrap_or(1).saturating_sub(1) as usize;
+        let lines: Vec<&str> = content.split('\n').collect();
+        let end_line = if params["limit"].is_number() {
+            start_line + params["limit"].as_u64().unwrap_or(0) as usize
+        } else {
+            lines.len()
+        };
+        lines.get(start_line..end_line.min(lines.len())).unwrap_or(&[]).join("\n")
+    } else {
+        content
+    };
+
+    Ok(json!({ "content": content }))
+}
+
+pub async fn handle_acp_write_file(state: &AppState, params: &Value) -> Result<Value, String> {
+    let path = params["path"].as_str().ok_or("missing 'path'")?;
+    let content = params["content"].as_str().ok_or("missing 'content'")?;
+
+    // Capture old content before writing (for diff views)
+    let old_content = state.worktree_state.lock().record_write(
+        Path::new(path),
+        content,
+    );
+
+    // Write to disk
+    tokio::fs::write(path, content)
+        .await
+        .map_err(|e| format!("Failed to write file: {e}"))?;
+
+    // If document is open, update it
+    if let Some(mut entry) = state.documents.get_mut(path) {
+        let model = entry.value_mut();
+        let line_count = model.line_count();
+        if line_count == 0 {
+            let edit = murder_text::EditOperation::insert(murder_text::Position::new(0, 0), content.to_string());
+            model.apply_edit(&edit);
+        } else {
+            let last_line = line_count - 1;
+            let last_col = model.buffer.get_line_length(last_line);
+            let edit = murder_text::EditOperation::replace(
+                murder_text::Range::new(murder_text::Position::new(0, 0), murder_text::Position::new(last_line, last_col)),
+                content.to_string(),
+            );
+            model.apply_edit(&edit);
+        }
+        model.mark_saved();
+    }
+
+    Ok(json!({
+        "success": true,
+        "old_content": old_content,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// ACP terminal handlers
+// ---------------------------------------------------------------------------
+
+pub async fn handle_acp_create_terminal(state: &AppState, params: &Value) -> Result<Value, String> {
+    let command = params["command"].as_str().ok_or("missing 'command'")?;
+    let cwd = params.get("cwd").and_then(|v| v.as_str());
+
+    let args: Vec<String> = params["args"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let env: Vec<(String, String)> = params["env"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| {
+                    let obj = v.as_object()?;
+                    let name = obj.get("name")?.as_str()?;
+                    let value = obj.get("value")?.as_str()?;
+                    Some((name.to_string(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let output_byte_limit = params["outputByteLimit"].as_u64().map(|v| v as usize);
+
+    let terminal_id = state.agents.terminals
+        .create_terminal(&command, &args, &env, cwd, output_byte_limit)
+        .await
+        .map_err(|e| format!("Failed to create terminal: {e}"))?;
+
+    Ok(json!({ "terminalId": terminal_id }))
+}
+
+pub async fn handle_acp_terminal_output(state: &AppState, params: &Value) -> Result<Value, String> {
+    let terminal_id = params["terminalId"].as_str().ok_or("missing 'terminalId'")?;
+
+    let (output, truncated) = state.agents.terminals
+        .terminal_output(terminal_id)
+        .await
+        .ok_or_else(|| format!("Terminal not found: {terminal_id}"))?;
+
+    let (exited, exit_code, exit_signal) = state.agents.terminals
+        .terminal_info(terminal_id)
+        .await
+        .ok_or_else(|| format!("Terminal not found: {terminal_id}"))?;
+
+    let mut result = json!({
+        "output": output,
+        "truncated": truncated,
+    });
+
+    if exited {
+        let mut status = serde_json::Map::new();
+        if let Some(code) = exit_code {
+            status.insert("exitCode".into(), json!(code));
+        }
+        if let Some(signal) = exit_signal {
+            status.insert("signal".into(), json!(signal));
+        }
+        result["exitStatus"] = json!(status);
+    }
+
+    Ok(result)
+}
+
+pub async fn handle_acp_wait_for_terminal_exit(state: &AppState, params: &Value) -> Result<Value, String> {
+    let terminal_id = params["terminalId"].as_str().ok_or("missing 'terminalId'")?;
+
+    let start = std::time::Instant::now();
+    loop {
+        if let Some((exited, exit_code, exit_signal)) = state.agents.terminals.terminal_info(terminal_id).await {
+            if exited {
+                let mut result = serde_json::Map::new();
+                if let Some(code) = exit_code {
+                    result.insert("exitCode".into(), json!(code));
+                }
+                if let Some(signal) = exit_signal {
+                    result.insert("signal".into(), json!(signal));
+                }
+                return Ok(json!(result));
+            }
+        }
+        if start.elapsed().as_secs() > 300 {
+            return Err(format!("Terminal {} did not exit within 5 minutes", terminal_id));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
+pub async fn handle_acp_kill_terminal(state: &AppState, params: &Value) -> Result<Value, String> {
+    let terminal_id = params["terminalId"].as_str().ok_or("missing 'terminalId'")?;
+    state.agents.terminals.kill_terminal(terminal_id).await;
+    Ok(json!({ "success": true }))
+}
+
+pub async fn handle_acp_release_terminal(state: &AppState, params: &Value) -> Result<Value, String> {
+    let terminal_id = params["terminalId"].as_str().ok_or("missing 'terminalId'")?;
+    state.agents.terminals.release_terminal(terminal_id).await;
+    Ok(json!({ "success": true }))
+}
+
+pub async fn handle_acp_terminal_write_input(state: &AppState, params: &Value) -> Result<Value, String> {
+    let terminal_id = params["terminalId"].as_str().ok_or("missing 'terminalId'")?;
+    let data = params["data"].as_str().ok_or("missing 'data'")?;
+    state.agents.terminals.write_input(terminal_id, data).await
+        .map_err(|e| format!("Failed to write to terminal: {e}"))?;
+    Ok(json!({ "success": true }))
+}
+
+pub async fn handle_acp_terminal_resize(state: &AppState, params: &Value) -> Result<Value, String> {
+    let terminal_id = params["terminalId"].as_str().ok_or("missing 'terminalId'")?;
+    let cols = params["cols"].as_u64().ok_or("missing 'cols'")? as u16;
+    let rows = params["rows"].as_u64().ok_or("missing 'rows'")? as u16;
+    state.agents.terminals.resize_terminal(terminal_id, rows, cols).await
+        .map_err(|e| format!("Failed to resize terminal: {e}"))?;
+    Ok(json!({ "success": true }))
+}
+
+// ---------------------------------------------------------------------------
+// Worktree state handlers
+// ---------------------------------------------------------------------------
+
+/// Get the "before" content for a file that was recently changed.
+/// Used by the chat panel to show diffs for agent edits.
+pub async fn handle_get_file_before_content(state: &AppState, params: &Value) -> Result<Value, String> {
+    let path = params["path"].as_str().ok_or("missing 'path'")?;
+    let before = state.worktree_state.lock().get_before_content(Path::new(path));
+    Ok(json!({
+        "content": before,
+    }))
+}
+
+/// Get the full change record (old + new content) for a file.
+pub async fn handle_get_file_change(state: &AppState, params: &Value) -> Result<Value, String> {
+    let path = params["path"].as_str().ok_or("missing 'path'")?;
+    let change = state.worktree_state.lock().get_change(Path::new(path));
+    if let Some(c) = change {
+        Ok(json!({
+            "path": c.path.to_string_lossy().to_string(),
+            "old_content": c.old_content,
+            "new_content": c.new_content,
+            "kind": match c.kind {
+                murder_workspace::FileEventKind::Created => "created",
+                murder_workspace::FileEventKind::Modified => "modified",
+                murder_workspace::FileEventKind::Deleted => "deleted",
+                murder_workspace::FileEventKind::Renamed => "renamed",
+            },
+        }))
+    } else {
+        Ok(json!({ "content": null }))
+    }
+}

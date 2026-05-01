@@ -1040,6 +1040,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "murder-acp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam",
+ "dashmap",
+ "murder-terminal",
+ "murder-text",
+ "murder-workspace",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "murder-db"
 version = "0.1.0"
 dependencies = [
@@ -1085,9 +1103,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "crossbeam",
  "dashmap",
  "futures",
  "mime_guess",
+ "murder-acp",
  "murder-git",
  "murder-terminal",
  "murder-text",
@@ -1210,6 +1230,7 @@ dependencies = [
  "log",
  "memchr",
  "notify",
+ "parking_lot",
  "pathdiff",
  "rayon",
  "regex",
