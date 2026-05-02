@@ -7,6 +7,7 @@ interface StatusBarProps {
   col: number;
   encoding: string;
   lineEnding: string;
+  wordWrap: boolean;
   workspaceName: string;
 }
 
@@ -27,6 +28,7 @@ export function StatusBar({
   col,
   encoding,
   lineEnding,
+  wordWrap,
   workspaceName,
 }: StatusBarProps) {
   const bg = workspaceName ? COLORS.bg : COLORS.bgNoFolder;
@@ -44,6 +46,7 @@ export function StatusBar({
         <StatusBarItem>Spaces: 4</StatusBarItem>
         <StatusBarItem>{encoding}</StatusBarItem>
         <StatusBarItem>{lineEnding}</StatusBarItem>
+        {wordWrap && <StatusBarItem>Word Wrap</StatusBarItem>}
         <StatusBarItem>{language}</StatusBarItem>
       </div>
     </div>

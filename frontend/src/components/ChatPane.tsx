@@ -757,7 +757,7 @@ function ToolCallAccordion({
   // Prefer terminalId from content block, fallback to tracked mapping
   let terminalId = terminalContent?.terminalId;
   if (!terminalId) {
-    terminalId = acpStore.getTerminalId(acpStore.getDefaultSessionId() ?? "", tool.toolCallId);
+    terminalId = acpStore.getTerminalId(tool.toolCallId);
   }
   const commandLabel = tool.title || kind;
 

@@ -12,6 +12,8 @@ interface ChatTabsProps {
   activeTabId: string | null;
   onNewTab: () => void;
   onCloseTab: (id: string) => void;
+  minimized?: boolean;
+  onToggleMinimize?: () => void;
 }
 
 const COLORS = {
@@ -31,6 +33,8 @@ export function ChatTabs({
   activeTabId,
   onNewTab,
   onCloseTab,
+  minimized = false,
+  onToggleMinimize,
 }: ChatTabsProps) {
   const [tabs, setTabs] = useState<ChatTab[]>([]);
 
@@ -145,6 +149,29 @@ export function ChatTabs({
           </div>
         );
       })}
+
+      {onToggleMinimize && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleMinimize();
+          }}
+          style={{
+            padding: "0 8px",
+            fontSize: 12,
+            lineHeight: 1,
+            color: COLORS.textInactive,
+            background: "none",
+            border: "none",
+            borderLeft: `1px solid ${COLORS.border}`,
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+          title={minimized ? "Expand chat panel" : "Minimize chat panel"}
+        >
+          {minimized ? "▴" : "▾"}
+        </button>
+      )}
 
       <button
         onClick={onNewTab}

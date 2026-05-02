@@ -1,6 +1,15 @@
 # planning document
 A place to keep more than a TODO list but a set of priorities and approach for the TODO list items. A plan instead of just reacting to shifting priorities and bugs we encounter (those those are critical and should be fixed when encountered)
 
+# TODO Files
+- **IDE features**: `ide/TODO.md` — visual/layout parity, editor, explorer, terminal, keyboard/focus
+- **ACP client**: `acp_client/TODO.md` — chat panel, agent integration, MCP endpoints
+
+# STRATEGY
+1. **IDE first** — Achieve side-by-side parity with the VSCode server at `localhost:9888`. The VSCode server is the reference for UI/UX, layout, interactions.
+2. **ACP second** — Agent chat is a dockable panel inside the IDE. It does NOT dictate IDE architecture.
+3. **Zed patterns for chat** — Open tool call accordions, streaming content visible, not collapsed.
+4. **DO NOT copy VSCode ACP client** — Their tool calling UX is bad (closed accordions, grouped together, bare iframe). Use VSCode server for IDE patterns, Zed for chat patterns.
 
 # PLAN
 - keep working on UI/UX improvements to frontend

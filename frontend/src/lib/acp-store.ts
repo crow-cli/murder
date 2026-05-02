@@ -29,42 +29,50 @@ interface SessionState {
   agentConfig: AgentConfig | null;
 }
 
-function createEmptySession(): SessionState {
-  return {
-    client: null,
-    status: "disconnected",
-    sessionInfo: null,
-    notifications: [],
-    pendingPermission: null,
-    cwd: "",
-    agentConfig: null,
-  };
-}
-
-// ─── Multi-session store ────────────────────────────────────────────────────
-
-type Subscriber = (sessionId: string) => void;
+// ─── Global state ────────────────────────────────────────────────────────────
 
 const sessions = new Map<string, SessionState>();
-const subscribers = new Set<Subscriber>();
 let defaultSessionId: string | null = null;
 
+type SessionSubscriber = (state: SessionState) => void;
+type MetaSubscriber = () => void;
+
+const sessionSubscribers = new Map<string, Set<SessionSubscriber>>();
+const metaSubscribers = new Set<MetaSubscriber>();
+
 function notifySession(sessionId: string) {
-  for (const cb of subscribers) cb(sessionId);
+  const state = sessions.get(sessionId);
+  if (!state) return;
+  const subs = sessionSubscribers.get(sessionId);
+  if (subs) {
+    for (const cb of subs) cb(state);
+  }
+  notifyMeta();
 }
 
-function getSessionState(id: string): SessionState {
-  if (!sessions.has(id)) sessions.set(id, createEmptySession());
-  return sessions.get(id)!;
+function notifyMeta() {
+  for (const cb of metaSubscribers) cb();
 }
 
-function setSessionState(id: string, partial: Partial<SessionState>) {
-  const state = getSessionState(id);
+function setSessionState(
+  sessionId: string,
+  partial: Partial<SessionState>,
+): void {
+  const state = sessions.get(sessionId);
+  if (!state) return;
   Object.assign(state, partial);
-  notifySession(id);
+  notifySession(sessionId);
 }
 
 // ─── Session lifecycle ───────────────────────────────────────────────────────
+
+/** Initialize the default session (backwards compat). */
+export function initialize(config: AgentConfig, cwd: string): string {
+  const sessionId = `session-${Date.now()}`;
+  createSession(sessionId, config, cwd);
+  defaultSessionId = sessionId;
+  return sessionId;
+}
 
 export function createSession(
   sessionId: string,
@@ -85,17 +93,21 @@ export function createSession(
   sessions.set(sessionId, state);
 
   if (!defaultSessionId) defaultSessionId = sessionId;
+  notifyMeta();
 
   const client = new AcpClient({
     agentConfig: config,
     cwd,
     onNotification: (n) => {
-      setSessionState(sessionId, {
-        notifications: [...state.notifications, n],
-      });
+      const s = sessions.get(sessionId);
+      if (s) {
+        // MUST create new array reference for React to detect the change
+        s.notifications = [...s.notifications, n];
+        notifySession(sessionId);
+      }
     },
-    onStatusChange: (s) => {
-      setSessionState(sessionId, { status: s });
+    onStatusChange: (s2) => {
+      setSessionState(sessionId, { status: s2 });
     },
     onPermissionRequest: (req, resolve, reject) => {
       setSessionState(sessionId, {
@@ -118,122 +130,119 @@ export function createSession(
 }
 
 export function closeSession(sessionId: string): void {
-  const state = sessions.get(sessionId);
-  if (state?.client) {
-    state.client.disconnect().catch(() => {});
+  const session = sessions.get(sessionId);
+  if (session?.client) {
+    session.client.disconnect().catch(() => {});
   }
   sessions.delete(sessionId);
+  sessionSubscribers.delete(sessionId);
 
   if (defaultSessionId === sessionId) {
-    const keys = Array.from(sessions.keys());
-    defaultSessionId = keys.length > 0 ? keys[keys.length - 1] : null;
+    const remaining = Array.from(sessions.keys());
+    defaultSessionId =
+      remaining.length > 0 ? remaining[remaining.length - 1] : null;
   }
-
-  notifySession(sessionId);
+  notifyMeta();
 }
 
-export function getSessionIds(): string[] {
-  return Array.from(sessions.keys());
+export function reconnect(config: AgentConfig, cwd: string) {
+  if (defaultSessionId) {
+    closeSession(defaultSessionId);
+  }
+  initialize(config, cwd);
 }
 
-export function getDefaultSessionId(): string | null {
-  return defaultSessionId;
-}
-
-export function setDefaultSessionId(id: string | null): void {
-  if (id === null || sessions.has(id)) {
-    defaultSessionId = id;
-    notifySession("__meta__");
+export function clearNotifications(sessionId?: string) {
+  const id = sessionId || defaultSessionId;
+  if (id) {
+    setSessionState(id, { notifications: [] });
   }
 }
 
-// ─── Per-session access ──────────────────────────────────────────────────────
+// ─── Subscriptions ───────────────────────────────────────────────────────────
 
-export function getSession(sessionId: string): SessionState {
-  return getSessionState(sessionId);
+/** Backwards compat — subscribes to the default session. */
+export function subscribe(
+  cb: (state: SessionState) => void,
+): () => void {
+  return subscribeToSession(defaultSessionId || "", cb);
 }
 
 export function subscribeToSession(
   sessionId: string,
   cb: (state: SessionState) => void,
 ): () => void {
-  const wrapper: Subscriber = (id) => {
-    if (id === sessionId || id === "__meta__") {
-      cb(getSessionState(sessionId));
+  if (!sessionSubscribers.has(sessionId)) {
+    sessionSubscribers.set(sessionId, new Set());
+  }
+  sessionSubscribers.get(sessionId)!.add(cb);
+  // Call immediately with current state
+  const state = sessions.get(sessionId);
+  if (state) cb(state);
+  return () => {
+    const subs = sessionSubscribers.get(sessionId);
+    if (subs) subs.delete(cb);
+  };
+}
+
+export function subscribeToMeta(cb: MetaSubscriber): () => void {
+  metaSubscribers.add(cb);
+  return () => metaSubscribers.delete(cb);
+}
+
+// ─── Getters ─────────────────────────────────────────────────────────────────
+
+export function getState(): SessionState {
+  return getSession(defaultSessionId || "");
+}
+
+export function getSession(sessionId: string): SessionState {
+  return (
+    sessions.get(sessionId) || {
+      client: null,
+      status: "disconnected",
+      sessionInfo: null,
+      notifications: [],
+      pendingPermission: null,
+      cwd: "",
+      agentConfig: null,
     }
-  };
-  subscribers.add(wrapper);
-  cb(getSessionState(sessionId));
-  return () => subscribers.delete(wrapper);
+  );
 }
 
-export function subscribeToMeta(cb: () => void): () => void {
-  const wrapper: Subscriber = (id) => {
-    if (id === "__meta__") cb();
-  };
-  subscribers.add(wrapper);
-  return () => subscribers.delete(wrapper);
+export function getDefaultSessionId(): string | null {
+  return defaultSessionId;
 }
 
-export function getClient(sessionId: string): AcpClient | null {
-  return sessions.get(sessionId)?.client ?? null;
+export function getSessionIds(): string[] {
+  return Array.from(sessions.keys());
 }
 
-export function prompt(sessionId: string, text: string): Promise<void> {
+// Expose client for imperative calls (prompt, cancel, etc.)
+export function getClient(sessionId?: string): AcpClient | null {
+  const id = sessionId ?? defaultSessionId;
+  if (!id) return null;
+  return sessions.get(id)?.client ?? null;
+}
+
+// ─── Actions ─────────────────────────────────────────────────────────────────
+
+export async function prompt(sessionId: string, text: string) {
   const client = getClient(sessionId);
-  if (!client) throw new Error(`Session ${sessionId} not found`);
-  return client.prompt(text).then(() => {});
+  if (!client) throw new Error("No client for session");
+  return client.prompt(text);
 }
 
-export function cancel(sessionId: string): Promise<void> {
+export async function cancel(sessionId: string) {
   const client = getClient(sessionId);
-  if (!client) return Promise.resolve();
+  if (!client) return;
   return client.cancel();
 }
 
-export function getTerminalId(
-  sessionId: string,
-  toolCallId: string,
-): string | undefined {
-  return sessions.get(sessionId)?.client?.getTerminalId(toolCallId);
-}
-
-// ─── Backwards compat ────────────────────────────────────────────────────────
-
-export function initialize(config: AgentConfig, cwd: string) {
-  const id = `default-${Date.now()}`;
-  createSession(id, config, cwd);
-  return id;
-}
-
-export function disconnect() {
-  if (defaultSessionId) closeSession(defaultSessionId);
-}
-
-export function reconnect(config: AgentConfig, cwd: string) {
-  disconnect();
-  const id = `default-${Date.now()}`;
-  createSession(id, config, cwd);
-  return id;
-}
-
-export function clearNotifications(sessionId?: string) {
-  const ids = sessionId ? [sessionId] : getSessionIds();
-  for (const id of ids) {
-    const state = sessions.get(id);
-    if (state) {
-      state.notifications = [];
-      notifySession(id);
-    }
-  }
-}
-
-export function subscribe(cb: () => void): () => void {
-  if (!defaultSessionId) return () => {};
-  return subscribeToSession(defaultSessionId, () => cb());
-}
-
-export function getState(): SessionState {
-  if (!defaultSessionId) return createEmptySession();
-  return getSessionState(defaultSessionId);
+// Expose terminal ID mapping for inline terminal rendering
+export function getTerminalId(toolCallId: string): string | undefined {
+  const id = defaultSessionId;
+  if (!id) return undefined;
+  const client = getClient(id);
+  return client?.getTerminalId(toolCallId);
 }

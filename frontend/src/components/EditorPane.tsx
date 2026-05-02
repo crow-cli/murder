@@ -6,6 +6,7 @@ interface EditorPaneProps {
   language: string;
   readOnly?: boolean;
   height?: number;
+  wordWrap?: boolean;
   onCursorChange?: (line: number, col: number) => void;
   onDirtyChange?: (dirty: boolean) => void;
 }
@@ -29,17 +30,22 @@ const COLORS = {
 const modelRegistry = new Map<string, monaco.editor.ITextModel>();
 
 const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
-  function EditorPane({ path, language, readOnly, height, onCursorChange, onDirtyChange }, ref) {
+  function EditorPane({ path, language, readOnly, height, wordWrap, onCursorChange, onDirtyChange }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
     const onSaveCallbacks = useRef<(() => void)[]>([]);
     const pathRef = useRef(path);
+    const wordWrapRef = useRef(wordWrap);
     const onCursorChangeRef = useRef(onCursorChange);
     const onDirtyChangeRef = useRef(onDirtyChange);
 
     useEffect(() => {
       pathRef.current = path;
     }, [path]);
+    useEffect(() => {
+      wordWrapRef.current = wordWrap;
+      editorRef.current?.updateOptions({ wordWrap: wordWrap ? "on" : "off" });
+    }, [wordWrap]);
     useEffect(() => {
       onCursorChangeRef.current = onCursorChange;
     }, [onCursorChange]);
@@ -124,12 +130,33 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
         onCursorChangeRef.current?.(e.position.lineNumber, e.position.column);
       });
 
-      // Register Ctrl+S
+      // Register Ctrl+S via Monaco command
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
         for (const cb of onSaveCallbacks.current) cb();
       });
 
+      // Also register via direct keydown listener (catches when Monaco doesn't)
+      const container = containerRef.current;
+      const handleEditorKeydown = (e: KeyboardEvent) => {
+        const ctrl = e.ctrlKey || e.metaKey;
+        if (ctrl && e.key === 's') {
+          e.preventDefault();
+          e.stopPropagation();
+          for (const cb of onSaveCallbacks.current) cb();
+        }
+        if (ctrl && e.key === 'w') {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(
+            new CustomEvent("editor-close-tab", { detail: { path: pathRef.current } }),
+          );
+        }
+      };
+      container?.addEventListener('keydown', handleEditorKeydown, true);
+
       return () => {
+        container?.removeEventListener('keydown', handleEditorKeydown, true);
+        editor.dispose();
         editor.dispose();
         // Clean up all models on unmount (full component destruction)
         for (const [, model] of modelRegistry) {

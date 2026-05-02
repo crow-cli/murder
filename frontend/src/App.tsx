@@ -57,7 +57,9 @@ export default function App() {
   const [terminalVisible, setTerminalVisible] = useState(false);
   const [chatVisible, setChatVisible] = useState(true);
   const [chatSessionVisible, setChatSessionVisible] = useState(false);
+  const [chatSessionMinimized, setChatSessionMinimized] = useState(false);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
+  const [wordWrap, setWordWrap] = useState(false);
   const [agentConfig, setAgentConfig] = useState<AgentConfig>(FALLBACK_AGENT_CONFIG);
 
   // Load agent config from JSON file
@@ -153,7 +155,7 @@ export default function App() {
     }
   }, []);
 
-  // Global keyboard shortcuts
+  // Global keyboard shortcuts (non-editor — editor handles its own via Monaco)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
@@ -166,18 +168,12 @@ export default function App() {
         setShowFolderPicker(true);
         return;
       }
-      if (ctrl && e.key === "s" && !isInput) {
+      if (ctrl && e.key === "s") {
+        // Always save active file, regardless of what has focus
         e.preventDefault();
         e.stopPropagation();
         const af = activeFileRef.current;
         if (af) saveFile(af);
-        return;
-      }
-      if (ctrl && e.key === "w" && !isInput) {
-        e.preventDefault();
-        e.stopPropagation();
-        const af = activeFileRef.current;
-        if (af) closeTab(af);
         return;
       }
       if (ctrl && e.key === "b" && !isInput) {
@@ -192,16 +188,28 @@ export default function App() {
         setTerminalVisible((v) => !v);
         return;
       }
+      if (e.altKey && e.key === "z" && !isInput) {
+        e.preventDefault();
+        e.stopPropagation();
+        setWordWrap((v) => !v);
+        return;
+      }
       if (ctrl && e.key === "l" && !isInput) {
         e.preventDefault();
         e.stopPropagation();
         setActiveActivity("chat");
         if (acpStore.getSessionIds().length === 0 && workspaceRootRef.current) {
-          handleNewChatSession();
+          handleNewChatSessionRef.current();
         } else {
           setChatSessionVisible((v) => {
-            if (!v) setChatVisible(false);
-            return !v;
+            if (!v) {
+              setChatVisible(false);
+              setChatSessionMinimized(false);
+              return true;
+            }
+            // Already visible — toggle minimized
+            setChatSessionMinimized((m) => !m);
+            return true;
           });
         }
         return;
@@ -220,7 +228,27 @@ export default function App() {
     };
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [saveFile, closeTab]);
+  }, []);
+
+  // Listen for Monaco Ctrl+S custom event (save)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.path) saveFile(detail.path);
+    };
+    window.addEventListener("editor-save", handler);
+    return () => window.removeEventListener("editor-save", handler);
+  }, [saveFile]);
+
+  // Listen for Monaco Ctrl+W custom event (close tab)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.path) closeTab(detail.path);
+    };
+    window.addEventListener("editor-close-tab", handler);
+    return () => window.removeEventListener("editor-close-tab", handler);
+  }, [closeTab]);
 
   const handleOpenFolder = async (path: string) => {
     setShowFolderPicker(false);
@@ -235,6 +263,7 @@ export default function App() {
       const sessionId = acpStore.initialize(agentConfig, path);
       setActiveChatSessionId(sessionId);
       setChatSessionVisible(true);
+      setChatSessionMinimized(false);
       setChatVisible(false); // Hide left panel chat when editor-area chat is active
     } catch (e: any) {
       notify(`Failed to open: ${e.message || e}`);
@@ -292,7 +321,13 @@ export default function App() {
     acpStore.createSession(sessionId, agentConfig, workspaceRootRef.current);
     setActiveChatSessionId(sessionId);
     setChatSessionVisible(true);
+    setChatSessionMinimized(false);
   }, [agentConfig]);
+
+  const handleNewChatSessionRef = useRef(handleNewChatSession);
+  useEffect(() => {
+    handleNewChatSessionRef.current = handleNewChatSession;
+  }, [handleNewChatSession]);
 
   const handleCloseChatSession = useCallback((sessionId: string) => {
     acpStore.closeSession(sessionId);
@@ -303,6 +338,10 @@ export default function App() {
 
   const handleChatTabClick = useCallback((sessionId: string) => {
     setActiveChatSessionId(sessionId);
+  }, []);
+
+  const handleToggleChatMinimize = useCallback(() => {
+    setChatSessionMinimized((m) => !m);
   }, []);
 
   const handleMenuAction = useCallback(
@@ -331,6 +370,9 @@ export default function App() {
         case "toggle_terminal":
           setTerminalVisible((v) => !v);
           break;
+        case "word_wrap":
+          setWordWrap((v) => !v);
+          break;
         case "explorer":
           setActiveActivity("explorer");
           setSidebarVisible(true);
@@ -358,11 +400,12 @@ export default function App() {
           setActiveActivity("chat");
           if (acpStore.getSessionIds().length === 0 && workspaceRoot) {
             handleNewChatSession();
+          } else if (!chatSessionVisible) {
+            setChatVisible(false);
+            setChatSessionVisible(true);
+            setChatSessionMinimized(false);
           } else {
-            setChatSessionVisible((v) => {
-              if (!v) setChatVisible(false);
-              return !v;
-            });
+            setChatSessionMinimized((m) => !m);
           }
           break;
         case "rpc_log":
@@ -450,6 +493,12 @@ export default function App() {
           action: "toggle_terminal",
           shortcut: "Ctrl+`",
         },
+        { separator: true },
+        {
+          label: wordWrap ? "Disable Word Wrap" : "Word Wrap",
+          action: "word_wrap",
+          shortcut: "Alt+Z",
+        },
       ],
     },
     {
@@ -531,7 +580,6 @@ export default function App() {
           "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         fontSize: 13,
         overflow: "hidden",
-        userSelect: "none",
       }}
     >
       <MenuBar
@@ -647,27 +695,41 @@ export default function App() {
               style={{
                 display: "flex",
                 flexDirection: "column",
-                height: chatSessionVisible ? "50%" : 0,
-                minHeight: 150,
+                height: chatSessionMinimized ? 35 : "50%",
+                minHeight: chatSessionMinimized ? 35 : 150,
                 borderBottom: `1px solid ${COLORS.border}`,
-                flexShrink: chatSessionVisible ? 0 : 1,
+                flexShrink: 0,
                 overflow: "hidden",
+                transition: chatSessionMinimized ? "none" : "height 0.15s ease",
               }}
             >
-              <ChatTabs
-                activeTabId={activeChatSessionId}
-                onTabClick={handleChatTabClick}
-                onNewTab={handleNewChatSession}
-                onCloseTab={handleCloseChatSession}
-              />
-              <div style={{ flex: 1, overflow: "hidden" }}>
-                {activeChatSessionId && (
-                  <ChatSessionPane
-                    sessionId={activeChatSessionId}
-                    onFileChanged={handleAgentFileChange}
-                  />
-                )}
+              <div
+                onClick={() => chatSessionMinimized && setChatSessionMinimized(false)}
+                style={{ cursor: chatSessionMinimized ? "pointer" : "default" }}
+              >
+                <ChatTabs
+                  activeTabId={activeChatSessionId}
+                  onTabClick={handleChatTabClick}
+                  onNewTab={handleNewChatSession}
+                  onCloseTab={handleCloseChatSession}
+                  minimized={chatSessionMinimized}
+                  onToggleMinimize={handleToggleChatMinimize}
+                />
               </div>
+              {!chatSessionMinimized && (
+                <div style={{ flex: 1, overflow: "hidden" }}>
+                  {activeChatSessionId && (
+                    <ChatSessionPane
+                      sessionId={activeChatSessionId}
+                      onClose={() => {
+                        setChatSessionVisible(false);
+                        setChatSessionMinimized(false);
+                      }}
+                      onFileChanged={handleAgentFileChange}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -693,6 +755,7 @@ export default function App() {
                 ref={editorRef}
                 path={currentFile.path}
                 language={currentFile.language}
+                wordWrap={wordWrap}
                 onCursorChange={handleCursorChange}
                 onDirtyChange={handleDirtyChange}
               />
@@ -1015,6 +1078,7 @@ export default function App() {
         col={cursorCol}
         encoding="UTF-8"
         lineEnding="LF"
+        wordWrap={wordWrap}
         workspaceName={workspaceRoot?.split("/").pop() || ""}
       />
 
