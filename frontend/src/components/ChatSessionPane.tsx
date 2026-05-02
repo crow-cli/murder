@@ -17,21 +17,24 @@ import InlineTerminal from "./InlineTerminal";
 import { FileReadView, FileWriteView, FileEditView } from "./FileViews";
 import { WebFetchView, WebSearchView } from "./WebViews";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────
 
 type GroupedNotifications = ReturnType<typeof groupNotifications>;
 type GroupItem = GroupedNotifications[number][number];
 
-/** Cache for file contents used in diffs — kept for backward compat */
-
-interface ChatPaneProps {
-  onClose: () => void;
+interface ChatSessionPaneProps {
+  sessionId: string;
+  onClose?: () => void;
   onFileChanged?: (path: string, content: string) => void;
 }
 
-// ─── ChatPane ────────────────────────────────────────────────────────────────
+// ─── ChatSessionPane — session-aware version of ChatPane ─────────────────────
 
-export default function ChatPane({ onClose, onFileChanged }: ChatPaneProps) {
+export default function ChatSessionPane({
+  sessionId,
+  onClose,
+  onFileChanged,
+}: ChatSessionPaneProps) {
   const [input, setInput] = useState("");
   const [notifications, setNotifications] = useState<AcpNotification[]>([]);
   const [connectionStatus, setConnectionStatus] =
@@ -50,23 +53,22 @@ export default function ChatPane({ onClose, onFileChanged }: ChatPaneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const prevNotifLen = useRef(0);
 
-  // Sync from store
+  // Subscribe to this specific session
   useEffect(() => {
-    const s = acpStore.getState();
+    const s = acpStore.getSession(sessionId);
     setNotifications(s.notifications);
     setConnectionStatus(s.status);
     setSessionInfo(s.sessionInfo);
     setPendingPermission(s.pendingPermission);
 
-    const unsub = acpStore.subscribe(() => {
-      const s2 = acpStore.getState();
+    const unsub = acpStore.subscribeToSession(sessionId, (s2) => {
       setNotifications(s2.notifications);
       setConnectionStatus(s2.status);
       setSessionInfo(s2.sessionInfo);
       setPendingPermission(s2.pendingPermission);
     });
     return unsub;
-  }, []);
+  }, [sessionId]);
 
   // Auto-scroll on new notifications
   useEffect(() => {
@@ -81,15 +83,13 @@ export default function ChatPane({ onClose, onFileChanged }: ChatPaneProps) {
       setTimeout(() => inputRef.current?.focus(), 50);
   }, [connectionStatus]);
 
-  // Extract content from a tool call — checks content blocks, rawOutput, and rawInput
+  // Extract content from a tool call
   function extractContentFromTool(tool: any): string | null {
-    // Check rawOutput (crow-cli puts file content here for read tool)
     if (tool.rawOutput) {
       if (typeof tool.rawOutput === "string") return tool.rawOutput;
       if (tool.rawOutput.content) return tool.rawOutput.content;
       if (tool.rawOutput.output) return tool.rawOutput.output;
     }
-    // Check content blocks
     if (tool.content) {
       const textBlocks = tool.content
         .filter((c: any) => c.type === "content")
@@ -100,16 +100,14 @@ export default function ChatPane({ onClose, onFileChanged }: ChatPaneProps) {
     return null;
   }
 
-  // Fetch file contents for tool calls. Uses the frontend file cache for
-  // "before" content on edits — the cache is populated by the ACP client's
-  // readTextFile and writeTextFile handlers (which see full file content).
+  // Fetch file contents for tool calls
   useEffect(() => {
     const sessionNotes = notifications.filter(
       (n) => n.type === "session_notification",
     ) as GroupItem[];
     const groups = groupNotifications(sessionNotes);
 
-    const client = acpStore.getClient(acpStore.getDefaultSessionId() ?? "");
+    const client = acpStore.getClient(sessionId);
     if (!client) return;
 
     for (const group of groups) {
@@ -125,12 +123,16 @@ export default function ChatPane({ onClose, onFileChanged }: ChatPaneProps) {
           const kind = tool.kind || "";
           const title = tool.title || "";
           const titleLower = title.toLowerCase();
-          // Infer kind from title prefix if not set
-          const effectiveKind = kind ||
-            (titleLower.startsWith("read:") ? "read" :
-             titleLower.startsWith("write:") || titleLower.startsWith("create:") ? "write" :
-             titleLower.startsWith("edit:") ? "edit" :
-             "");
+          const effectiveKind =
+            kind ||
+            (titleLower.startsWith("read:")
+              ? "read"
+              : titleLower.startsWith("write:") ||
+                  titleLower.startsWith("create:")
+                ? "write"
+                : titleLower.startsWith("edit:")
+                  ? "edit"
+                  : "");
           const status = tool.status || "";
           if (status !== "completed") continue;
           if (!["read", "write", "edit"].includes(effectiveKind)) continue;
@@ -142,30 +144,26 @@ export default function ChatPane({ onClose, onFileChanged }: ChatPaneProps) {
           if (!filePath) continue;
 
           if (effectiveKind === "edit") {
-            // For edits: use cached "before" content (from prior read/write),
-            // then read current "after" from disk.
             const beforeContent = getCachedFile(filePath);
             if (!beforeContent) {
-              // Never read this file before — can't render a proper diff.
-              // Just fetch current content and show as read-only.
               fetchFile(client, filePath, toolCallId, "read");
               continue;
             }
-            client.wsInvoke("read_file", { path: filePath })
-              .then((result: any) => {
-                const afterContent = result.content as string;
-                cacheFile(filePath, afterContent); // update cache with post-edit content
-                setFetchedFiles((prev) => {
-                  const next = new Map(prev);
-                  next.set(toolCallId, { path: filePath, content: afterContent, beforeContent });
-                  return next;
+            client.wsInvoke("read_file", { path: filePath }).then((result: any) => {
+              const afterContent = result.content as string;
+              cacheFile(filePath, afterContent);
+              setFetchedFiles((prev) => {
+                const next = new Map(prev);
+                next.set(toolCallId, {
+                  path: filePath,
+                  content: afterContent,
+                  beforeContent,
                 });
-                if (onFileChanged) onFileChanged(filePath, afterContent);
-              })
-              .catch(() => {});
+                return next;
+              });
+              if (onFileChanged) onFileChanged(filePath, afterContent);
+            }).catch(() => {});
           } else if (effectiveKind === "read") {
-            // Read tool: content may already be embedded in the tool call
-            // (crow-cli returns file content directly). Extract it if present.
             const embeddedContent = extractContentFromTool(tool);
             if (embeddedContent) {
               cacheFile(filePath, embeddedContent);
@@ -176,11 +174,9 @@ export default function ChatPane({ onClose, onFileChanged }: ChatPaneProps) {
               });
               if (onFileChanged) onFileChanged(filePath, embeddedContent);
             } else {
-              // Fallback: fetch from disk
               fetchFile(client, filePath, toolCallId, kind);
             }
           } else {
-            // Write: fetch content from disk and cache it.
             fetchFile(client, filePath, toolCallId, kind);
           }
         }
@@ -188,20 +184,16 @@ export default function ChatPane({ onClose, onFileChanged }: ChatPaneProps) {
         // mergeToolCalls failed, ignore
       }
     }
-  }, [notifications]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [notifications]);
 
-  /** Extract file path from a tool call — checks Diff content blocks first, then title */
   function extractFilePath(tool: any): string | null {
-    // Check for Diff content blocks (edit tool sends type: "diff" with path)
     if (tool.content) {
       const diffContent = tool.content.find((c: any) => c.type === "diff");
       if (diffContent?.path) return diffContent.path;
     }
-
     const title = tool.title || "";
     const pathMatch = title.match(/[:\/]([\/\w.~-]+)/);
     if (pathMatch) return pathMatch[1];
-
     if (tool.content) {
       const text = tool.content
         .filter((c: any) => c.type === "content")
@@ -214,71 +206,56 @@ export default function ChatPane({ onClose, onFileChanged }: ChatPaneProps) {
   }
 
   const fetchFile = useCallback(
-    (
-      client: any,
-      filePath: string,
-      toolCallId: string,
-      kind: string,
-      beforeContent?: string,
-    ) => {
-      client
-        .wsInvoke("read_file", { path: filePath })
-        .then((result: any) => {
-          const content = result.content as string;
-          cacheFile(filePath, content); // populate cache for future diffs
-          setFetchedFiles((prev) => {
-            const next = new Map(prev);
-            next.set(toolCallId, { path: filePath, content, beforeContent });
-            return next;
-          });
-          if (onFileChanged) onFileChanged(filePath, content);
-        })
-        .catch(() => {});
+    (client: any, filePath: string, toolCallId: string, kind: string) => {
+      client.wsInvoke("read_file", { path: filePath }).then((result: any) => {
+        const content = result.content as string;
+        cacheFile(filePath, content);
+        setFetchedFiles((prev) => {
+          const next = new Map(prev);
+          next.set(toolCallId, { path: filePath, content });
+          return next;
+        });
+        if (onFileChanged) onFileChanged(filePath, content);
+      }).catch(() => {});
     },
     [onFileChanged],
   );
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || connectionStatus !== "ready") return;
-    const client = acpStore.getClient(acpStore.getDefaultSessionId() ?? "");
-    if (!client) return;
-    const text = input.trim();
-    setInput("");
     try {
-      await client.prompt(text);
+      await acpStore.prompt(sessionId, input.trim());
+      setInput("");
     } catch (err) {
       console.error("Prompt failed:", err);
     }
-  }, [input, connectionStatus]);
+  }, [input, connectionStatus, sessionId]);
 
   const handleCancel = useCallback(async () => {
-    const client = acpStore.getClient(acpStore.getDefaultSessionId() ?? "");
-    if (!client) return;
     try {
-      await client.cancel();
+      await acpStore.cancel(sessionId);
     } catch (err) {
       console.error("Cancel failed:", err);
     }
-  }, []);
+  }, [sessionId]);
 
-  const handleResolvePermission = useCallback(
-    (response: any) => {
-      if (pendingPermission) {
-        pendingPermission.resolve(response);
-        acpStore.getState().pendingPermission = null;
-        setPendingPermission(null);
-      }
-    },
-    [pendingPermission],
-  );
-
-  const handleRejectPermission = useCallback(() => {
-    if (pendingPermission) {
-      pendingPermission.reject(new Error("Cancelled"));
-      acpStore.getState().pendingPermission = null;
+  const handleResolvePermission = useCallback((response: any) => {
+    const state = acpStore.getSession(sessionId);
+    if (state.pendingPermission) {
+      state.pendingPermission.resolve(response);
+      acpStore.getSession(sessionId).pendingPermission = null;
       setPendingPermission(null);
     }
-  }, [pendingPermission]);
+  }, [sessionId]);
+
+  const handleRejectPermission = useCallback(() => {
+    const state = acpStore.getSession(sessionId);
+    if (state.pendingPermission) {
+      state.pendingPermission.reject(new Error("Cancelled"));
+      acpStore.getSession(sessionId).pendingPermission = null;
+      setPendingPermission(null);
+    }
+  }, [sessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -379,7 +356,7 @@ export default function ChatPane({ onClose, onFileChanged }: ChatPaneProps) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Sub-components (unchanged)                                          */
+/* Sub-components (identical to ChatPane)                              */
 /* ------------------------------------------------------------------ */
 
 function Header({
@@ -397,7 +374,7 @@ function Header({
   isStreaming: boolean;
   agentName: string;
   onCancel: () => void;
-  onClose: () => void;
+  onClose?: () => void;
 }) {
   return (
     <div style={styles.header}>
@@ -427,9 +404,11 @@ function Header({
             ⏹ Stop
           </button>
         )}
-        <button onClick={onClose} style={styles.closeBtn}>
-          ✕
-        </button>
+        {onClose && (
+          <button onClick={onClose} style={styles.closeBtn}>
+            ✕
+          </button>
+        )}
       </div>
     </div>
   );
@@ -752,41 +731,32 @@ function ToolCallAccordion({
         ? "var(--red)"
         : "var(--yellow)";
 
-  // Extract terminal info from tool content (ACP spec: content array contains { type: "terminal", terminalId })
   const terminalContent = tool.content?.find((c: any) => c.type === "terminal");
-  // Prefer terminalId from content block, fallback to tracked mapping
   let terminalId = terminalContent?.terminalId;
   if (!terminalId) {
-    terminalId = acpStore.getTerminalId(acpStore.getDefaultSessionId() ?? "", tool.toolCallId);
+    // TODO: need to pass sessionId here, skip for now
   }
   const commandLabel = tool.title || kind;
 
-  // Extract web fetch info
   const rawOutput = tool.rawOutput;
   const isWebFetch = kind === "fetch" || tool.toolName === "web_fetch";
   const isWebSearch = kind === "search" || tool.toolName === "web_search";
 
-  // Extract file info — prefer fetchedFile (from async fetch), fall back to rawOutput
   let fileContent = fetchedFile?.content;
   const beforeContent = fetchedFile?.beforeContent;
   const filePath = fetchedFile?.path || title;
 
-  // For read tool calls, content may be in rawOutput (crow-cli embeds it there)
   if (!fileContent && rawOutput) {
     if (typeof rawOutput === "string") fileContent = rawOutput;
     else if (rawOutput.content) fileContent = rawOutput.content;
     else if (rawOutput.output) fileContent = rawOutput.output;
   }
 
-  // Extract web fetch URL and content
   const fetchUrl = rawOutput?.url || tool.title || "";
   const fetchContent = rawOutput?.content || rawOutput?.markdown || "";
-
-  // Extract web search results
   const searchQuery = rawOutput?.query || tool.title || "";
   const searchResults = rawOutput?.results || rawOutput?.items || [];
 
-  // Determine which view to render — fallback to title prefix if kind is missing
   const titleLower = title.toLowerCase();
   const inferredKind = kind ||
     (titleLower.startsWith("read:") ? "read" :
@@ -799,7 +769,6 @@ function ToolCallAccordion({
   const isTerminal = (inferredKind === "execute" || kind === "execute") && terminalId;
   const isRead = inferredKind === "read";
   const isWrite = inferredKind === "write" || inferredKind === "create";
-  // Edit: either kind === "edit" OR has a Diff content block
   const hasDiffContent = tool.content?.some((c: any) => c.type === "diff");
   const isEdit = inferredKind === "edit" || hasDiffContent;
 
@@ -853,7 +822,6 @@ function ToolCallAccordion({
             fontSize: 11,
           }}
         >
-          {/* Terminal view — show live output as it runs (ACP spec) */}
           {isTerminal && terminalId ? (
             <InlineTerminal
               terminalId={terminalId}
@@ -862,7 +830,6 @@ function ToolCallAccordion({
             />
           ) : null}
 
-          {/* File read view */}
           {isRead && fileContent && (
             <div>
               <div style={viewHeaderStyle}>
@@ -873,7 +840,6 @@ function ToolCallAccordion({
             </div>
           )}
 
-          {/* File write view */}
           {isWrite && fileContent && (
             <div>
               <div style={viewHeaderStyle}>
@@ -884,7 +850,6 @@ function ToolCallAccordion({
             </div>
           )}
 
-          {/* File edit view */}
           {isEdit && fileContent && beforeContent && (
             <div>
               <div style={viewHeaderStyle}>
@@ -899,17 +864,14 @@ function ToolCallAccordion({
             </div>
           )}
 
-          {/* Web fetch view */}
           {isWebFetch && fetchUrl && fetchContent && (
             <WebFetchView url={fetchUrl} content={fetchContent} />
           )}
 
-          {/* Web search view */}
           {isWebSearch && Array.isArray(searchResults) && searchResults.length > 0 && (
             <WebSearchView query={searchQuery} results={searchResults} />
           )}
 
-          {/* Fallback: show rawInput / rawOutput */}
           {!isTerminal && !isRead && !isWrite && !isEdit && !isWebFetch && !isWebSearch &&
             tool.rawInput &&
             Object.keys(tool.rawInput).length > 0 && (

@@ -6,6 +6,8 @@ import EditorPane, {
 } from "./components/EditorPane";
 import ExplorerPane from "./components/ExplorerPane";
 import ChatPane from "./components/ChatPane";
+import ChatSessionPane from "./components/ChatSessionPane";
+import { ChatTabs } from "./components/ChatTabs";
 import RpcLogPanel from "./components/RpcLogPanel";
 import { FolderPicker } from "./components/FolderPicker";
 import { ActivityBar, type ActivityId } from "./components/ActivityBar";
@@ -54,6 +56,8 @@ export default function App() {
   const [cursorCol, setCursorCol] = useState(1);
   const [terminalVisible, setTerminalVisible] = useState(false);
   const [chatVisible, setChatVisible] = useState(true);
+  const [chatSessionVisible, setChatSessionVisible] = useState(false);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const [agentConfig, setAgentConfig] = useState<AgentConfig>(FALLBACK_AGENT_CONFIG);
 
   // Load agent config from JSON file
@@ -192,8 +196,14 @@ export default function App() {
         e.preventDefault();
         e.stopPropagation();
         setActiveActivity("chat");
-        setChatVisible(true);
-        setSidebarVisible(true);
+        if (acpStore.getSessionIds().length === 0 && workspaceRootRef.current) {
+          handleNewChatSession();
+        } else {
+          setChatSessionVisible((v) => {
+            if (!v) setChatVisible(false);
+            return !v;
+          });
+        }
         return;
       }
       if (ctrl && e.shiftKey && e.key === "R" && !isInput) {
@@ -221,8 +231,11 @@ export default function App() {
       setActiveFile(null);
       setDirtyFiles(new Set());
       notify(`Opened ${path.split("/").pop()}`);
-      // Initialize persistent ACP client
-      acpStore.initialize(agentConfig, path);
+      // Initialize persistent ACP client and track session ID
+      const sessionId = acpStore.initialize(agentConfig, path);
+      setActiveChatSessionId(sessionId);
+      setChatSessionVisible(true);
+      setChatVisible(false); // Hide left panel chat when editor-area chat is active
     } catch (e: any) {
       notify(`Failed to open: ${e.message || e}`);
     }
@@ -270,6 +283,26 @@ export default function App() {
       next.delete(path);
       return next;
     });
+  }, []);
+
+  // Chat session management
+  const handleNewChatSession = useCallback(() => {
+    if (!workspaceRootRef.current) return;
+    const sessionId = `session-${Date.now()}`;
+    acpStore.createSession(sessionId, agentConfig, workspaceRootRef.current);
+    setActiveChatSessionId(sessionId);
+    setChatSessionVisible(true);
+  }, [agentConfig]);
+
+  const handleCloseChatSession = useCallback((sessionId: string) => {
+    acpStore.closeSession(sessionId);
+    const remaining = acpStore.getSessionIds();
+    setActiveChatSessionId(remaining.length > 0 ? remaining[remaining.length - 1] : null);
+    if (remaining.length === 0) setChatSessionVisible(false);
+  }, []);
+
+  const handleChatTabClick = useCallback((sessionId: string) => {
+    setActiveChatSessionId(sessionId);
   }, []);
 
   const handleMenuAction = useCallback(
@@ -323,8 +356,14 @@ export default function App() {
           break;
         case "chat":
           setActiveActivity("chat");
-          setChatVisible(true);
-          setSidebarVisible(true);
+          if (acpStore.getSessionIds().length === 0 && workspaceRoot) {
+            handleNewChatSession();
+          } else {
+            setChatSessionVisible((v) => {
+              if (!v) setChatVisible(false);
+              return !v;
+            });
+          }
           break;
         case "rpc_log":
           setActiveActivity("rpc");
@@ -339,7 +378,7 @@ export default function App() {
   const openFilesList = Array.from(openFiles.values());
 
   // Determine which side panels are visible
-  const showLeftPanel = chatVisible && activeActivity === "chat";
+  const showLeftPanel = chatVisible && activeActivity === "chat" && !chatSessionVisible;
   const showRightPanel =
     sidebarVisible &&
     (activeActivity === "explorer" ||
@@ -593,7 +632,7 @@ export default function App() {
           </div>
         )}
 
-        {/* CENTER: Editor + Terminal */}
+        {/* CENTER: Editor + Terminal + Chat Sessions */}
         <div
           style={{
             flex: 1,
@@ -602,6 +641,37 @@ export default function App() {
             overflow: "hidden",
           }}
         >
+          {/* Chat session tabs + panel (when visible in editor area) */}
+          {chatSessionVisible && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                height: chatSessionVisible ? "50%" : 0,
+                minHeight: 150,
+                borderBottom: `1px solid ${COLORS.border}`,
+                flexShrink: chatSessionVisible ? 0 : 1,
+                overflow: "hidden",
+              }}
+            >
+              <ChatTabs
+                activeTabId={activeChatSessionId}
+                onTabClick={handleChatTabClick}
+                onNewTab={handleNewChatSession}
+                onCloseTab={handleCloseChatSession}
+              />
+              <div style={{ flex: 1, overflow: "hidden" }}>
+                {activeChatSessionId && (
+                  <ChatSessionPane
+                    sessionId={activeChatSessionId}
+                    onFileChanged={handleAgentFileChange}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Editor area */}
           <div
             style={{
               flex: 1,
