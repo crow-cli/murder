@@ -40,11 +40,11 @@ Use `localhost:9888` as visual/behavioral reference for:
 - [ ] Copy/paste files via explorer context menu
 
 ### Explorer Context Menu (Right-Click)
-- [ ] New File... (creates file, opens editor, focuses input)
-- [ ] New Folder...
-- [ ] Rename... (inline rename with input field)
-- [ ] Delete (moves to trash or permanent)
-- [ ] Copy Path / Copy Relative Path
+- [x] New File... (creates file, opens editor, focuses input)
+- [x] New Folder...
+- [x] Rename... (inline rename with input field)
+- [x] Delete (moves to trash or permanent)
+- [x] Copy Path / Copy Relative Path
 - [ ] Reveal in File Manager
 - [ ] Compare with Selected
 - [ ] Copy / Cut / Paste

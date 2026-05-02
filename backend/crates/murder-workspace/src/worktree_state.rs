@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ignore::WalkBuilder;
 use parking_lot::RwLock;
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -120,7 +121,7 @@ impl WorktreeState {
         .unwrap();
 
         // Scan and cache all files
-        self.scan_directory(root, root);
+        self.scan_directory(root);
 
         self._watcher = Some(watcher);
         self.start_cleanup_task();
@@ -203,28 +204,32 @@ impl WorktreeState {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
-    fn scan_directory(&self, root: &Path, current: &Path) {
-        let Ok(entries) = std::fs::read_dir(current) else {
-            return;
-        };
-        for entry in entries.flatten() {
+    fn scan_directory(&self, root: &Path) {
+        // Use ignore::WalkBuilder for gitignore-respecting file scan.
+        // Falls back to manual read_dir if root doesn't exist (shouldn't happen).
+        let walk = WalkBuilder::new(root)
+            .hidden(false)
+            .git_global(true)
+            .git_ignore(true)
+            .git_exclude(true)
+            .build();
+        for entry in walk {
+            let Ok(entry) = entry else { continue };
             let path = entry.path();
-            if Self::should_ignore(&path) {
+            if Self::should_ignore(path) {
                 continue;
             }
-            if path.is_dir() {
-                self.scan_directory(root, &path);
-            } else if path.is_file() {
+            if entry.file_type().is_some_and(|ft| ft.is_file()) {
                 // Cache file content if within size limit
                 if let Ok(meta) = path.metadata() {
                     if meta.len() > MAX_FILE_SIZE {
                         continue;
                     }
-                    if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(content) = std::fs::read_to_string(path) {
                         self.inner
                             .write()
                             .content_cache
-                            .insert(path, content);
+                            .insert(path.to_path_buf(), content);
                     }
                 }
             }

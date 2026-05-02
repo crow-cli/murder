@@ -17,18 +17,18 @@ import InlineTerminal from "./InlineTerminal";
 import { FileReadView, FileWriteView, FileEditView } from "./FileViews";
 import { WebFetchView, WebSearchView } from "./WebViews";
 
-// ── Types ──────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 type GroupedNotifications = ReturnType<typeof groupNotifications>;
 type GroupItem = GroupedNotifications[number][number];
 
 interface ChatSessionPaneProps {
   sessionId: string;
-  onClose?: () => void;
+  onClose: () => void;
   onFileChanged?: (path: string, content: string) => void;
 }
 
-// ─── ChatSessionPane — session-aware version of ChatPane ─────────────────────
+// ─── ChatSessionPane ─────────────────────────────────────────────────────────
 
 export default function ChatSessionPane({
   sessionId,
@@ -53,7 +53,7 @@ export default function ChatSessionPane({
   const inputRef = useRef<HTMLInputElement>(null);
   const prevNotifLen = useRef(0);
 
-  // Subscribe to this specific session
+  // Subscribe to THIS specific session
   useEffect(() => {
     const s = acpStore.getSession(sessionId);
     setNotifications(s.notifications);
@@ -61,7 +61,8 @@ export default function ChatSessionPane({
     setSessionInfo(s.sessionInfo);
     setPendingPermission(s.pendingPermission);
 
-    const unsub = acpStore.subscribeToSession(sessionId, (s2) => {
+    const unsub = acpStore.subscribeToSession(sessionId, () => {
+      const s2 = acpStore.getSession(sessionId);
       setNotifications(s2.notifications);
       setConnectionStatus(s2.status);
       setSessionInfo(s2.sessionInfo);
@@ -149,27 +150,33 @@ export default function ChatSessionPane({
               fetchFile(client, filePath, toolCallId, "read");
               continue;
             }
-            client.wsInvoke("read_file", { path: filePath }).then((result: any) => {
-              const afterContent = result.content as string;
-              cacheFile(filePath, afterContent);
-              setFetchedFiles((prev) => {
-                const next = new Map(prev);
-                next.set(toolCallId, {
-                  path: filePath,
-                  content: afterContent,
-                  beforeContent,
+            client
+              .wsInvoke("read_file", { path: filePath })
+              .then((result: any) => {
+                const afterContent = result.content as string;
+                cacheFile(filePath, afterContent);
+                setFetchedFiles((prev) => {
+                  const next = new Map(prev);
+                  next.set(toolCallId, {
+                    path: filePath,
+                    content: afterContent,
+                    beforeContent,
+                  });
+                  return next;
                 });
-                return next;
-              });
-              if (onFileChanged) onFileChanged(filePath, afterContent);
-            }).catch(() => {});
+                if (onFileChanged) onFileChanged(filePath, afterContent);
+              })
+              .catch(() => {});
           } else if (effectiveKind === "read") {
             const embeddedContent = extractContentFromTool(tool);
             if (embeddedContent) {
               cacheFile(filePath, embeddedContent);
               setFetchedFiles((prev) => {
                 const next = new Map(prev);
-                next.set(toolCallId, { path: filePath, content: embeddedContent });
+                next.set(toolCallId, {
+                  path: filePath,
+                  content: embeddedContent,
+                });
                 return next;
               });
               if (onFileChanged) onFileChanged(filePath, embeddedContent);
@@ -181,19 +188,21 @@ export default function ChatSessionPane({
           }
         }
       } catch {
-        // mergeToolCalls failed, ignore
+        // ignore
       }
     }
-  }, [notifications]);
+  }, [notifications, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function extractFilePath(tool: any): string | null {
     if (tool.content) {
       const diffContent = tool.content.find((c: any) => c.type === "diff");
       if (diffContent?.path) return diffContent.path;
     }
+
     const title = tool.title || "";
     const pathMatch = title.match(/[:\/]([\/\w.~-]+)/);
     if (pathMatch) return pathMatch[1];
+
     if (tool.content) {
       const text = tool.content
         .filter((c: any) => c.type === "content")
@@ -206,17 +215,26 @@ export default function ChatSessionPane({
   }
 
   const fetchFile = useCallback(
-    (client: any, filePath: string, toolCallId: string, kind: string) => {
-      client.wsInvoke("read_file", { path: filePath }).then((result: any) => {
-        const content = result.content as string;
-        cacheFile(filePath, content);
-        setFetchedFiles((prev) => {
-          const next = new Map(prev);
-          next.set(toolCallId, { path: filePath, content });
-          return next;
-        });
-        if (onFileChanged) onFileChanged(filePath, content);
-      }).catch(() => {});
+    (
+      client: any,
+      filePath: string,
+      toolCallId: string,
+      kind: string,
+      beforeContent?: string,
+    ) => {
+      client
+        .wsInvoke("read_file", { path: filePath })
+        .then((result: any) => {
+          const content = result.content as string;
+          cacheFile(filePath, content);
+          setFetchedFiles((prev) => {
+            const next = new Map(prev);
+            next.set(toolCallId, { path: filePath, content, beforeContent });
+            return next;
+          });
+          if (onFileChanged) onFileChanged(filePath, content);
+        })
+        .catch(() => {});
     },
     [onFileChanged],
   );
@@ -239,23 +257,24 @@ export default function ChatSessionPane({
     }
   }, [sessionId]);
 
-  const handleResolvePermission = useCallback((response: any) => {
-    const state = acpStore.getSession(sessionId);
-    if (state.pendingPermission) {
-      state.pendingPermission.resolve(response);
-      acpStore.getSession(sessionId).pendingPermission = null;
-      setPendingPermission(null);
-    }
-  }, [sessionId]);
+  const handleResolvePermission = useCallback(
+    (response: any) => {
+      if (pendingPermission) {
+        pendingPermission.resolve(response);
+        acpStore.getSession(sessionId).pendingPermission = null;
+        setPendingPermission(null);
+      }
+    },
+    [pendingPermission, sessionId],
+  );
 
   const handleRejectPermission = useCallback(() => {
-    const state = acpStore.getSession(sessionId);
-    if (state.pendingPermission) {
-      state.pendingPermission.reject(new Error("Cancelled"));
+    if (pendingPermission) {
+      pendingPermission.reject(new Error("Cancelled"));
       acpStore.getSession(sessionId).pendingPermission = null;
       setPendingPermission(null);
     }
-  }, [sessionId]);
+  }, [pendingPermission, sessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -356,7 +375,7 @@ export default function ChatSessionPane({
 }
 
 /* ------------------------------------------------------------------ */
-/* Sub-components (identical to ChatPane)                              */
+/* Sub-components                                                      */
 /* ------------------------------------------------------------------ */
 
 function Header({
@@ -374,7 +393,7 @@ function Header({
   isStreaming: boolean;
   agentName: string;
   onCancel: () => void;
-  onClose?: () => void;
+  onClose: () => void;
 }) {
   return (
     <div style={styles.header}>
@@ -404,11 +423,9 @@ function Header({
             ⏹ Stop
           </button>
         )}
-        {onClose && (
-          <button onClick={onClose} style={styles.closeBtn}>
-            ✕
-          </button>
-        )}
+        <button onClick={onClose} style={styles.closeBtn}>
+          ✕
+        </button>
       </div>
     </div>
   );
@@ -457,7 +474,7 @@ function PermissionBar({
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {permission.options?.map((opt: any) => (
           <button
-            key={opt.optionId}
+            key={opt.optionID}
             onClick={() =>
               onResolve({
                 outcome: { outcome: "selected", optionId: opt.optionId },
@@ -734,7 +751,7 @@ function ToolCallAccordion({
   const terminalContent = tool.content?.find((c: any) => c.type === "terminal");
   let terminalId = terminalContent?.terminalId;
   if (!terminalId) {
-    // TODO: need to pass sessionId here, skip for now
+    terminalId = acpStore.getTerminalId(tool.toolCallId);
   }
   const commandLabel = tool.title || kind;
 
@@ -754,19 +771,31 @@ function ToolCallAccordion({
 
   const fetchUrl = rawOutput?.url || tool.title || "";
   const fetchContent = rawOutput?.content || rawOutput?.markdown || "";
+
   const searchQuery = rawOutput?.query || tool.title || "";
   const searchResults = rawOutput?.results || rawOutput?.items || [];
 
   const titleLower = title.toLowerCase();
-  const inferredKind = kind ||
-    (titleLower.startsWith("read:") ? "read" :
-     titleLower.startsWith("write:") || titleLower.startsWith("create:") ? "write" :
-     titleLower.startsWith("edit:") ? "edit" :
-     titleLower.startsWith("fetch:") ? "fetch" :
-     titleLower.startsWith("search:") ? "search" :
-     titleLower.startsWith("run:") || titleLower.startsWith("exec:") || titleLower.startsWith("terminal:") || titleLower.startsWith("command:") ? "execute" :
-     "");
-  const isTerminal = (inferredKind === "execute" || kind === "execute") && terminalId;
+  const inferredKind =
+    kind ||
+    (titleLower.startsWith("read:")
+      ? "read"
+      : titleLower.startsWith("write:") || titleLower.startsWith("create:")
+        ? "write"
+        : titleLower.startsWith("edit:")
+          ? "edit"
+          : titleLower.startsWith("fetch:")
+            ? "fetch"
+            : titleLower.startsWith("search:")
+              ? "search"
+              : titleLower.startsWith("run:") ||
+                  titleLower.startsWith("exec:") ||
+                  titleLower.startsWith("terminal:") ||
+                  titleLower.startsWith("command:")
+                ? "execute"
+                : "");
+  const isTerminal =
+    (inferredKind === "execute" || kind === "execute") && terminalId;
   const isRead = inferredKind === "read";
   const isWrite = inferredKind === "write" || inferredKind === "create";
   const hasDiffContent = tool.content?.some((c: any) => c.type === "diff");
@@ -868,11 +897,18 @@ function ToolCallAccordion({
             <WebFetchView url={fetchUrl} content={fetchContent} />
           )}
 
-          {isWebSearch && Array.isArray(searchResults) && searchResults.length > 0 && (
-            <WebSearchView query={searchQuery} results={searchResults} />
-          )}
+          {isWebSearch &&
+            Array.isArray(searchResults) &&
+            searchResults.length > 0 && (
+              <WebSearchView query={searchQuery} results={searchResults} />
+            )}
 
-          {!isTerminal && !isRead && !isWrite && !isEdit && !isWebFetch && !isWebSearch &&
+          {!isTerminal &&
+            !isRead &&
+            !isWrite &&
+            !isEdit &&
+            !isWebFetch &&
+            !isWebSearch &&
             tool.rawInput &&
             Object.keys(tool.rawInput).length > 0 && (
               <div style={{ marginBottom: 6 }}>
@@ -882,7 +918,12 @@ function ToolCallAccordion({
                 </pre>
               </div>
             )}
-          {!isTerminal && !isRead && !isWrite && !isEdit && !isWebFetch && !isWebSearch &&
+          {!isTerminal &&
+            !isRead &&
+            !isWrite &&
+            !isEdit &&
+            !isWebFetch &&
+            !isWebSearch &&
             tool.rawOutput && (
               <div>
                 <div style={outputLabelStyle}>Output</div>

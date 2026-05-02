@@ -38,6 +38,7 @@ export class WsClient {
   public ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private terminalHandlers = new Set<TerminalEventHandler>();
+  private rawMessageHandlers = new Set<(event: MessageEvent) => void>();
 
   constructor(private url: string) {}
 
@@ -59,6 +60,10 @@ export class WsClient {
         this.reconnectTimer = setTimeout(() => this.reconnect(), 2000);
       };
       this.ws.onmessage = (event) => {
+        // Notify raw message handlers first (before JSON parsing)
+        for (const handler of this.rawMessageHandlers) {
+          handler(event);
+        }
         const msg = JSON.parse(event.data);
         // Response (has id)
         if (msg.id !== undefined) {
@@ -108,6 +113,17 @@ export class WsClient {
   onTerminalEvent(handler: TerminalEventHandler): () => void {
     this.terminalHandlers.add(handler);
     return () => this.terminalHandlers.delete(handler);
+  }
+
+  /** Subscribe to raw WebSocket messages (before JSON parsing). */
+  onMessage(handler: (event: MessageEvent) => void): () => void {
+    this.rawMessageHandlers.add(handler);
+    return () => this.rawMessageHandlers.delete(handler);
+  }
+
+  /** Alias for onMessage (for consistency). */
+  offMessage(handler: (event: MessageEvent) => void): void {
+    this.rawMessageHandlers.delete(handler);
   }
 
   private reconnect() {

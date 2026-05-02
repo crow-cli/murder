@@ -1,14 +1,16 @@
-//! File system watcher with debouncing and ignore patterns.
+//! File system watcher with debouncing and gitignore-based filtering.
 //!
 //! Wraps [`notify::RecommendedWatcher`] and coalesces rapid changes within a
-//! configurable debounce window (default 100 ms). Ignores common build artifact
-//! directories (`.git`, `node_modules`, `target`, …).
+//! configurable debounce window (default 100 ms). Walks the tree using the
+//! `ignore` crate to respect `.gitignore` files, watching only non-ignored
+//! directories individually to stay within the OS inotify watch limit.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use ignore::WalkBuilder;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 
@@ -42,6 +44,29 @@ pub enum FileEventKind {
 pub struct FileEvent {
     pub path: PathBuf,
     pub kind: FileEventKind,
+}
+
+/// Collect all directories under `root` that should be watched.
+/// Uses `ignore::WalkBuilder` to respect `.gitignore` files, plus
+/// a hardcoded skip list for common build artifact directories.
+fn collect_watch_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![root.to_path_buf()];
+    let walk = WalkBuilder::new(root)
+        .hidden(false)
+        .git_global(true)
+        .git_ignore(true)
+        .git_exclude(true)
+        .build();
+    for entry in walk {
+        let Ok(entry) = entry else { continue };
+        if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+            let path = entry.path().to_path_buf();
+            if !should_ignore(&path) {
+                dirs.push(path);
+            }
+        }
+    }
+    dirs
 }
 
 /// File system watcher with built-in debouncing.
@@ -108,9 +133,13 @@ impl FileWatcher {
         )
         .map_err(WorkspaceError::Watcher)?;
 
-        watcher
-            .watch(root, RecursiveMode::Recursive)
-            .map_err(WorkspaceError::Watcher)?;
+        // Watch only gitignore-respected directories individually (NonRecursive),
+        // avoiding the OS inotify limit that RecursiveMode::Recursive would hit.
+        for dir in collect_watch_dirs(root) {
+            if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
+                log::warn!("watcher: skipping {:?}: {}", dir, e);
+            }
+        }
 
         let debounce_handle = std::thread::spawn(move || loop {
             std::thread::sleep(debounce);
