@@ -48,7 +48,7 @@ export default function App() {
   const [dirtyFiles, setDirtyFiles] = useState<Set<string>>(new Set());
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activeActivity, setActiveActivity] = useState<ActivityId>("chat");
+  const [activeActivity, setActiveActivity] = useState<ActivityId>("explorer");
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [_menuOpen, setMenuOpen] = useState<string | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
@@ -188,7 +188,7 @@ export default function App() {
         setTerminalVisible((v) => !v);
         return;
       }
-      if (e.altKey && e.key === "z" && !isInput) {
+      if (e.altKey && e.key === "z") {
         e.preventDefault();
         e.stopPropagation();
         setWordWrap((v) => !v);
@@ -259,12 +259,11 @@ export default function App() {
       setActiveFile(null);
       setDirtyFiles(new Set());
       notify(`Opened ${path.split("/").pop()}`);
-      // Initialize persistent ACP client and track session ID
-      const sessionId = acpStore.initialize(agentConfig, path);
-      setActiveChatSessionId(sessionId);
-      setChatSessionVisible(true);
+      // Agent chat stays hidden — spawns only when Ctrl+L or chat icon is clicked
+      setChatSessionVisible(false);
       setChatSessionMinimized(false);
-      setChatVisible(false); // Hide left panel chat when editor-area chat is active
+      setChatVisible(false);
+      setActiveActivity("explorer");
     } catch (e: any) {
       notify(`Failed to open: ${e.message || e}`);
     }

@@ -44,6 +44,16 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
   const [editingName, setEditingName] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
 
+  // Inline create (new file/folder) state
+  const [creatingParentPath, setCreatingParentPath] = useState<string | null>(null);
+  const [creatingName, setCreatingName] = useState("");
+  const [creatingIsDir, setCreatingIsDir] = useState(false);
+  const createInputRef = useRef<HTMLInputElement>(null);
+
+  // Delete confirmation state
+  const [deletingPath, setDeletingPath] = useState<string | null>(null);
+  const [deletingName, setDeletingName] = useState("");
+
   // Listen for worktree file change events to refresh explorer
   useEffect(() => {
     const handleWorktreeEvent = (e: MessageEvent) => {
@@ -142,59 +152,65 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
     });
   };
 
-  const handleNewFile = async () => {
+  const handleNewFile = () => {
     if (!contextMenu) return;
     const parentPath = contextMenu.targetIsDir
       ? contextMenu.targetPath
       : contextMenu.targetPath.replace(/\/[^/]+$/, "");
-    const newName = prompt("New file name:");
-    if (!newName) return;
-    const newPath = `${parentPath}/${newName}`;
+    setCreatingParentPath(parentPath);
+    setCreatingName("");
+    setCreatingIsDir(false);
+    setContextMenu(null);
+  };
+
+  const handleNewFolder = () => {
+    if (!contextMenu) return;
+    const parentPath = contextMenu.targetIsDir
+      ? contextMenu.targetPath
+      : contextMenu.targetPath.replace(/\/[^/]+$/, "");
+    setCreatingParentPath(parentPath);
+    setCreatingName("");
+    setCreatingIsDir(true);
+    setContextMenu(null);
+  };
+
+  const handleCreateSubmit = async () => {
+    if (!creatingParentPath || !creatingName.trim()) {
+      setCreatingParentPath(null);
+      return;
+    }
+    const name = creatingName.trim();
+    const parentPath = creatingParentPath;
+    const isDir = creatingIsDir;
+    const newPath = `${parentPath}/${name}`;
+
+    setCreatingParentPath(null);
+    setCreatingName("");
+
     try {
-      await ws.invoke("create_file", { path: newPath, content: "" });
-      // Refresh parent directory
-      if (contextMenu.targetIsDir) {
-        setChildCache((prev) => {
-          const next = new Map(prev);
-          next.delete(contextMenu.targetPath);
-          return next;
-        });
-        if (expandedDirs.has(contextMenu.targetPath)) {
-          loadChildren(contextMenu.targetPath);
-        }
+      if (isDir) {
+        await ws.invoke("create_dir", { path: newPath });
+      } else {
+        await ws.invoke("create_file", { path: newPath, content: "" });
       }
+      // Expand the parent dir so we can see the new entry
+      setExpandedDirs((prev) => new Set(prev).add(parentPath));
+      setChildCache((prev) => {
+        const next = new Map(prev);
+        next.delete(parentPath);
+        return next;
+      });
+      loadChildren(parentPath);
       setChildCache(new Map());
       loadDir(root);
     } catch (e: any) {
-      alert(`Failed to create file: ${e.message || e}`);
+      alert(`Failed to create ${isDir ? "folder" : "file"}: ${e.message || e}`);
     }
   };
 
-  const handleNewFolder = async () => {
-    if (!contextMenu) return;
-    const parentPath = contextMenu.targetIsDir
-      ? contextMenu.targetPath
-      : contextMenu.targetPath.replace(/\/[^/]+$/, "");
-    const newName = prompt("New folder name:");
-    if (!newName) return;
-    const newPath = `${parentPath}/${newName}`;
-    try {
-      await ws.invoke("create_dir", { path: newPath });
-      if (contextMenu.targetIsDir) {
-        setChildCache((prev) => {
-          const next = new Map(prev);
-          next.delete(contextMenu.targetPath);
-          return next;
-        });
-        if (expandedDirs.has(contextMenu.targetPath)) {
-          loadChildren(contextMenu.targetPath);
-        }
-      }
-      setChildCache(new Map());
-      loadDir(root);
-    } catch (e: any) {
-      alert(`Failed to create folder: ${e.message || e}`);
-    }
+  const handleCreateCancel = () => {
+    setCreatingParentPath(null);
+    setCreatingName("");
   };
 
   const handleRename = () => {
@@ -231,17 +247,26 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
     setEditingPath(null);
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!contextMenu) return;
     const name = contextMenu.targetPath.split("/").pop() || "";
-    if (!confirm(`Delete "${name}"?`)) return;
+    setDeletingPath(contextMenu.targetPath);
+    setDeletingName(name);
+    setContextMenu(null);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingPath) return;
+    const path = deletingPath;
+    const isDir = deletingName.includes(".") ? false : true; // rough heuristic
+    setDeletingPath(null);
+    setDeletingName("");
     try {
-      await ws.invoke("remove", { path: contextMenu.targetPath });
-      // If deleting an expanded dir, remove from cache
-      if (contextMenu.targetIsDir && expandedDirs.has(contextMenu.targetPath)) {
+      await ws.invoke("remove", { path });
+      if (isDir && expandedDirs.has(path)) {
         setExpandedDirs((prev) => {
           const next = new Set(prev);
-          next.delete(contextMenu.targetPath);
+          next.delete(path);
           return next;
         });
       }
@@ -250,6 +275,11 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
     } catch (e: any) {
       alert(`Failed to delete: ${e.message || e}`);
     }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeletingPath(null);
+    setDeletingName("");
   };
 
   const handleCopyPath = async () => {
@@ -302,7 +332,80 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
     }
   }, [editingPath]);
 
+  // Focus create input when creating starts
+  useEffect(() => {
+    if (creatingParentPath && createInputRef.current) {
+      createInputRef.current.focus();
+      createInputRef.current.select();
+    }
+  }, [creatingParentPath]);
+
   // ── Rendering ──────────────────────────────────────────────────────────
+
+  /** Render the inline create input as a tree item */
+  const renderCreateInput = (depth: number, key: string): JSX.Element => (
+    <div
+      key={key}
+      style={{
+        paddingLeft: 8 + depth * 16,
+        paddingRight: 8,
+        paddingTop: 1,
+        paddingBottom: 1,
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: 13,
+        borderRadius: 3,
+        color: COLORS.text,
+        height: 22,
+        background: COLORS.hover,
+      }}
+    >
+      <span style={{ width: 16, textAlign: "center", fontSize: 10, color: COLORS.textDim, flexShrink: 0 }}>
+        {creatingIsDir ? "" : "📄"}
+      </span>
+      <input
+        ref={createInputRef}
+        value={creatingName}
+        onChange={(e) => setCreatingName(e.target.value)}
+        onBlur={handleCreateSubmit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleCreateSubmit();
+          if (e.key === "Escape") handleCreateCancel();
+        }}
+        onClick={(e) => e.stopPropagation()}
+        placeholder={creatingIsDir ? "New folder name" : "New file name"}
+        style={{
+          flex: 1,
+          background: COLORS.bg,
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: 2,
+          color: COLORS.text,
+          fontSize: 13,
+          padding: "0 4px",
+          outline: "none",
+          height: 18,
+        }}
+      />
+    </div>
+  );
+
+  /** Render entries for a given parent path, with create input injected */
+  const renderEntries = (parentPath: string, children: FileEntry[], depth: number): JSX.Element[] => {
+    const items: JSX.Element[] = [];
+    for (const child of children) {
+      items.push(renderItem(child, depth));
+      // If this child is the parent we're creating under, insert the create input after it
+      if (creatingParentPath === child.path && child.is_dir && expandedDirs.has(child.path)) {
+        items.push(renderCreateInput(depth + 1, `create-${child.path}`));
+      }
+    }
+    // If creating at root level
+    if (creatingParentPath === parentPath && depth === 0) {
+      items.push(renderCreateInput(depth, `create-${parentPath}`));
+    }
+    return items;
+  };
 
   const renderItem = (entry: FileEntry, depth: number): JSX.Element => {
     const isEditing = editingPath === entry.path;
@@ -389,9 +492,7 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
           expandedDirs.has(entry.path) &&
           childCache.has(entry.path) && (
             <div>
-              {childCache
-                .get(entry.path)!
-                .map((child) => renderItem(child, depth + 1))}
+              {renderEntries(entry.path, childCache.get(entry.path)!, depth + 1)}
             </div>
           )}
       </div>
@@ -421,10 +522,10 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
 
   return (
     <div
-      style={{ flex: 1, overflow: "auto", background: COLORS.bg }}
+      style={{ height: "100%", overflow: "auto", background: COLORS.bg, position: "relative" }}
       onContextMenu={handleRootContextMenu}
     >
-      {entries.map((entry) => renderItem(entry, 0))}
+      {renderEntries(root, entries, 0)}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
@@ -432,6 +533,59 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
           items={contextMenuItems}
           onClose={() => setContextMenu(null)}
         />
+      )}
+      {deletingPath && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            padding: "6px 8px",
+            background: "rgba(248,113,113,0.15)",
+            borderTop: `1px solid ${COLORS.border}`,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 12,
+            color: COLORS.text,
+            zIndex: 10,
+          }}
+        >
+          <span style={{ color: "var(--red)", fontWeight: 600 }}>⚠ Delete</span>
+          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            "{deletingName}"
+          </span>
+          <button
+            onClick={handleDeleteCancel}
+            style={{
+              padding: "2px 10px",
+              fontSize: 11,
+              borderRadius: 3,
+              border: `1px solid ${COLORS.border}`,
+              background: "transparent",
+              color: COLORS.textMuted,
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleDeleteConfirm}
+            style={{
+              padding: "2px 10px",
+              fontSize: 11,
+              borderRadius: 3,
+              border: "1px solid var(--red)",
+              background: "rgba(248,113,113,0.2)",
+              color: "var(--red)",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            Delete
+          </button>
+        </div>
       )}
     </div>
   );

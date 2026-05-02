@@ -102,6 +102,7 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
         theme: "murder-dark",
         automaticLayout: true,
         readOnly: readOnly || false,
+        wordWrap: wordWrap ? "on" : "off",
         minimap: { enabled: !readOnly },
         fontSize: readOnly ? 12 : 14,
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",

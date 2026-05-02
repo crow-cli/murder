@@ -98,3 +98,8 @@ cd murder-ide && cargo build --release --package murder-server --bin murder-serv
 - **Agent Command**: `/home/thomas/.local/bin/crow-cli acp`.
 - **Transport**: WebSocket → Backend stdio → Crow-CLI.
 - **Layout**: Chat left, Editor center, Explorer right, Terminal bottom.
+
+
+okay so we're really happy about how well this is going along. We might need a smaller notification on when the file is saved than what we have now. Because I save compulsively. Oh yeah we need to turn down/off the spellchecker intellisense for markdown completely.
+
+So yeah this is working really realy well
