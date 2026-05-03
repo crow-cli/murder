@@ -1,5 +1,6 @@
 //! WebSocket server — Axum + embedded static frontend.
 
+use std::io::Write;
 use std::sync::Arc;
 
 use axum::{
@@ -38,12 +39,20 @@ pub async fn run_server(app: App, port: u16) {
         .fallback(get(serve_embedded));
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!("Server listening on http://{addr}");
-    tracing::info!("WebSocket at ws://{addr}/ws");
-
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("failed to bind");
+
+    // Get the actual bound address (resolves port 0 to actual OS-assigned port)
+    let actual_addr = listener.local_addr().expect("failed to get local addr");
+    
+    // Print readiness marker to stdout for Electron parent process
+    // (must use println! not tracing, since tracing goes to stderr)
+    println!("__MURDER_SERVER_READY__ port={}", actual_addr.port());
+    let _ = std::io::stdout().flush();
+    
+    tracing::info!("Server listening on http://{actual_addr}");
+    tracing::info!("WebSocket at ws://{actual_addr}/ws");
 
     axum::serve(listener, router).await.expect("server failed");
 }
