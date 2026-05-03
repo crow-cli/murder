@@ -102,6 +102,8 @@ Use `localhost:9888` as visual/behavioral reference for:
 - [ ] Ctrl+Enter — Insert Line Below
 - [ ] Ctrl+Shift+Enter — Insert Line Above
 
+
+
 ### Command Palette
 - [ ] Fuzzy search across all commands
 - [ ] Grouped by category (File, Edit, View, etc.)
@@ -199,3 +201,11 @@ These VSCode features are excluded from scope. Do NOT implement:
 - Extension development host
 - Test runner UI
 - Coverage visualization
+
+
+
+## New Plan
+
+We have a pretty solid little web/electron IDE-ish editor here. I mean the presence of the terminal is pretty much all I need for it to be considered IDE in a lot of ways. The ability to see which files are being tracked in git, what's changed since the last git commit in little bars on the side is nice and common must-have for IDEs, but I'm thinking I'm pretty much good except for a few things I want to call out here that are very much like "this is what we want for our editor/IDE that is different" because yeah we've done a LOT of the above so it's time for a new perspective. I don't necessarily think that copying vscode style going forward is necessarily what we want to do. There are features we're going to leave out because agents.
+
+So the work  we've done here is really really good. I'm proud of this.

@@ -7,7 +7,7 @@
 - right click in editor is monaco-ified goodness so that's good. we want more of that everywhere.
 - right click in file explorer is standard firefox/browser right click interface, same as terminal. we override right click everywhere in same way we take control of keyboard shortcuts is the plan
 - terminal has some sporadic issues but seems to be working now
-- word wrap
+- ~~word wrap~~
 - we need a monaco style syntax highlighting interface for the input to the agent in the client. right now it's a single bar of text area and it does not show up in chat above
 - If you're typing something and click away from agent what you're typing disappears. what I'm trying to say is we need a document model for the text we're tying that hasn't been sent to session/prompt yet
 - chat is not scrollable and cannot be unfocused/unselected from while it is open. neither of these is unacceptable

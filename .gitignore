@@ -2,4 +2,5 @@ frontend/node_modules
 electron/node_modules
 electron/build
 electron/dist
+electron/out
 target
