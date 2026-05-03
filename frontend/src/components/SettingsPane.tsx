@@ -17,6 +17,21 @@ const COLORS = {
   accentBg: "#4ade8022",
 };
 
+function getDefaultJson(): string {
+  const s = settings.getSettings();
+  const defaultJson = JSON.stringify(
+    {
+      editor: s.editor,
+      languages: s.languages,
+      intellisense: s.intellisense,
+      terminal: s.terminal,
+    },
+    null,
+    2,
+  );
+  return `// Murder IDE Settings\n// JSONC format — comments and trailing commas supported\n\n${defaultJson}\n`;
+}
+
 export default function SettingsPane() {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -25,54 +40,47 @@ export default function SettingsPane() {
   const [error, setError] = useState<string | null>(null);
   const [jsonText, setJsonText] = useState("");
   const [configPath, setConfigPath] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // Load settings file content
   const loadSettingsFile = useCallback(async () => {
-    const path = settings.getConfigPath();
+    setLoading(true);
+
+    // Resolve config path ourselves (don't depend on module state)
+    let path = settings.getConfigPath();
+    if (!path) {
+      try {
+        const pathResult = await ws.invoke<{ path: string }>(
+          "get_config_path",
+          {},
+        );
+        path = pathResult.path;
+      } catch {
+        setLoading(false);
+        setJsonText(getDefaultJson());
+        setConfigPath("unknown");
+        return;
+      }
+    }
     setConfigPath(path);
-    if (!path) return;
 
     try {
       const result = await ws.invoke<{ content?: string }>("read_file", {
         path,
       });
-      if (result.content) {
+      if (result.content && result.content.trim()) {
         setJsonText(result.content);
       } else {
-        // File doesn't exist yet — create default
-        const defaultJson = JSON.stringify(
-          {
-            editor: settings.getSettings().editor,
-            languages: settings.getSettings().languages,
-            intellisense: settings.getSettings().intellisense,
-            terminal: settings.getSettings().terminal,
-          },
-          null,
-          2,
-        );
-        setJsonText(
-          `// Murder IDE Settings\n// JSONC format — comments and trailing commas supported\n\n${defaultJson}\n`,
-        );
+        // File doesn't exist or is empty — show defaults
+        setJsonText(getDefaultJson());
       }
       setError(null);
     } catch {
-      // File might not exist yet — show defaults
-      const s = settings.getSettings();
-      const defaultJson = JSON.stringify(
-        {
-          editor: s.editor,
-          languages: s.languages,
-          intellisense: s.intellisense,
-          terminal: s.terminal,
-        },
-        null,
-        2,
-      );
-      setJsonText(
-        `// Murder IDE Settings\n// JSONC format — comments and trailing commas supported\n\n${defaultJson}\n`,
-      );
+      // File doesn't exist — show defaults
+      setJsonText(getDefaultJson());
       setError(null);
     }
+    setLoading(false);
   }, []);
 
   // Init Monaco for settings editor
@@ -101,7 +109,7 @@ export default function SettingsPane() {
 
     const editor = monaco.editor.create(containerRef.current, {
       value: jsonText,
-      language: "json",
+      language: "jsonc",
       theme: "settings-dark",
       automaticLayout: true,
       fontSize: 13,
@@ -138,7 +146,7 @@ export default function SettingsPane() {
   const handleSave = async () => {
     if (!editorRef.current) return;
     const content = editorRef.current.getValue();
-    const path = settings.getConfigPath();
+    const path = configPath ?? settings.getConfigPath();
     if (!path) return;
 
     // Validate JSON (strip comments first)
@@ -197,7 +205,7 @@ export default function SettingsPane() {
             Settings
           </span>
           <span style={{ fontSize: 11, color: COLORS.textMuted }}>
-            {configPath ?? "loading..."}
+            {loading ? "loading..." : (configPath ?? "no config path")}
           </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -258,8 +266,22 @@ export default function SettingsPane() {
         </div>
       )}
 
-      {/* Editor */}
-      <div ref={containerRef} style={{ flex: 1, overflow: "hidden" }} />
+      {/* Editor or loading state */}
+      {loading ? (
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: COLORS.textMuted,
+          }}
+        >
+          Loading settings...
+        </div>
+      ) : (
+        <div ref={containerRef} style={{ flex: 1, overflow: "hidden" }} />
+      )}
 
       {/* Footer hint */}
       <div
