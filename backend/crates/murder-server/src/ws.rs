@@ -267,6 +267,9 @@ async fn handle_message(text: &str, app: &App) -> Value {
         "get_file_before_content" => handlers::handle_get_file_before_content(&state, &request.params).await,
         "get_file_change" => handlers::handle_get_file_change(&state, &request.params).await,
 
+        // Config methods
+        "get_config_path" => handlers::handle_get_config_path(&state, &request.params),
+
         unknown => Err(format!("unknown method: {unknown}")),
     };
 

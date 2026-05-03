@@ -1105,6 +1105,7 @@ dependencies = [
  "axum",
  "crossbeam",
  "dashmap",
+ "dirs 5.0.1",
  "futures",
  "mime_guess",
  "murder-acp",

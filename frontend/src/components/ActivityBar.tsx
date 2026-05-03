@@ -5,7 +5,8 @@ export type ActivityId =
   | "git"
   | "terminal"
   | "extensions"
-  | "rpc";
+  | "rpc"
+  | "settings";
 
 interface ActivityBarProps {
   active: ActivityId;
@@ -64,7 +65,18 @@ export function ActivityBar({ active, onActivate }: ActivityBarProps) {
         ))}
       </div>
       <div style={styles.bottomIcons}>
-        <button title="Settings" style={styles.icon}>
+        <button
+          title="Settings"
+          onClick={() => onActivate("settings")}
+          style={{
+            ...styles.icon,
+            opacity: active === "settings" ? 1 : 0.5,
+            borderLeft:
+              active === "settings"
+                ? `2px solid ${COLORS.active}`
+                : "2px solid transparent",
+          }}
+        >
           <span style={{ fontSize: 18 }}>⚙</span>
         </button>
       </div>

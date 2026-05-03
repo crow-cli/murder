@@ -9,6 +9,7 @@ import ChatPane from "./components/ChatPane";
 import ChatSessionPane from "./components/ChatSessionPane";
 import { ChatTabs } from "./components/ChatTabs";
 import RpcLogPanel from "./components/RpcLogPanel";
+import SettingsPane from "./components/SettingsPane";
 import { FolderPicker } from "./components/FolderPicker";
 import { ActivityBar, type ActivityId } from "./components/ActivityBar";
 import { StatusBar } from "./components/StatusBar";
@@ -19,6 +20,7 @@ import { ws } from "./lib/ws-client";
 import { getFileIcon } from "./lib/file-icons";
 import type { AgentConfig } from "./lib/acp-client";
 import * as acpStore from "./lib/acp-store";
+import * as settings from "./lib/settings";
 
 /** Default fallback if config file fails to load */
 const FALLBACK_AGENT_CONFIG: AgentConfig = {
@@ -59,7 +61,9 @@ export default function App() {
   const [chatSessionVisible, setChatSessionVisible] = useState(false);
   const [chatSessionMinimized, setChatSessionMinimized] = useState(false);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
-  const [wordWrap, setWordWrap] = useState(false);
+  const [wordWrap, setWordWrap] = useState(
+    settings.getSettings().editor.wordWrap === "on"
+  );
   const [agentConfig, setAgentConfig] = useState<AgentConfig>(FALLBACK_AGENT_CONFIG);
 
   // Load agent config from JSON file
@@ -68,6 +72,17 @@ export default function App() {
       .then(r => r.json())
       .then(setAgentConfig)
       .catch(() => {});
+  }, []);
+
+  // Load global IDE settings at startup
+  useEffect(() => {
+    settings.loadSettings().then(() => {
+      setWordWrap(settings.getSettings().editor.wordWrap === "on");
+    });
+    // Subscribe so word wrap updates when settings change
+    return settings.subscribe(() => {
+      setWordWrap(settings.getSettings().editor.wordWrap === "on");
+    });
   }, []);
 
   const activeFileRef = useRef(activeFile);
@@ -191,7 +206,10 @@ export default function App() {
       if (e.altKey && e.key === "z") {
         e.preventDefault();
         e.stopPropagation();
-        setWordWrap((v) => !v);
+        setWordWrap((v) => {
+          settings.updateSetting("editor", "wordWrap", !v ? "on" : "off");
+          return !v;
+        });
         return;
       }
       if (ctrl && e.key === "l" && !isInput) {
@@ -370,7 +388,10 @@ export default function App() {
           setTerminalVisible((v) => !v);
           break;
         case "word_wrap":
-          setWordWrap((v) => !v);
+          setWordWrap((v) => {
+            settings.updateSetting("editor", "wordWrap", !v ? "on" : "off");
+            return !v;
+          });
           break;
         case "explorer":
           setActiveActivity("explorer");
@@ -427,7 +448,8 @@ export default function App() {
       activeActivity === "search" ||
       activeActivity === "git" ||
       activeActivity === "extensions" ||
-      activeActivity === "rpc");
+      activeActivity === "rpc" ||
+      activeActivity === "settings");
 
   const menuItems: MenuGroup[] = [
     {
@@ -944,6 +966,7 @@ export default function App() {
                 {activeActivity === "git" && "Source Control"}
                 {activeActivity === "extensions" && "Extensions"}
                 {activeActivity === "rpc" && "RPC Log"}
+                {activeActivity === "settings" && "Settings"}
               </span>
               <button
                 style={{
@@ -1063,6 +1086,7 @@ export default function App() {
                 </div>
               )}
               {activeActivity === "rpc" && <RpcLogPanel />}
+              {activeActivity === "settings" && <SettingsPane />}
             </div>
           </div>
         )}

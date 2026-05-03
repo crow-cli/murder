@@ -1,5 +1,6 @@
 import { useRef, useEffect, useImperativeHandle, forwardRef } from "react";
 import * as monaco from "monaco-editor";
+import * as settings from "../lib/settings";
 
 interface EditorPaneProps {
   path: string;
@@ -121,7 +122,17 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
         foldingStrategy: "indentation",
         stickyScroll: { enabled: false },
         padding: { top: 8, bottom: 8 },
-        suggest: { showStatusBar: !readOnly },
+        suggest: {
+          showStatusBar: !readOnly,
+        },
+        // Intellisense — disable for languages in disabled list, or entirely
+        // For prose languages (markdown, plaintext), disable quickSuggestions to prevent
+        // word-completion popups while typing (like VSCode's "[markdown]": { "editor.quickSuggestions": false })
+        quickSuggestions: settings.getIntellisenseOptions(language).noQuickSuggestions
+          ? false
+          : (settings.getIntellisenseOptions(language).enabled ? { other: true, comments: false, strings: false } : false),
+        parameterHints: { enabled: settings.getIntellisenseOptions(language).parameterHintsEnabled },
+        wordBasedSuggestions: settings.getIntellisenseOptions(language).wordBasedSuggestions as "off" | "currentDocument" | "matchingDocuments" | "allDocuments",
       });
 
       editorRef.current = editor;

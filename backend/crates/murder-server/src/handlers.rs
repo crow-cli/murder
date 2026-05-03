@@ -743,3 +743,14 @@ pub async fn handle_get_file_change(state: &AppState, params: &Value) -> Result<
         Ok(json!({ "content": null }))
     }
 }
+
+/// Get the platform-specific global config path for Murder IDE.
+/// Returns `~/.crow/murder.json` expanded to an absolute path.
+pub fn handle_get_config_path(_state: &AppState, _params: &Value) -> Result<Value, String> {
+    let home = dirs::home_dir().ok_or("could not determine home directory")?;
+    let config_dir = home.join(".crow");
+    let config_file = config_dir.join("murder.json");
+    // Ensure the config directory exists
+    std::fs::create_dir_all(&config_dir).map_err(|e| format!("failed to create config dir: {e}"))?;
+    Ok(json!({ "path": config_file.to_string_lossy().to_string() }))
+}

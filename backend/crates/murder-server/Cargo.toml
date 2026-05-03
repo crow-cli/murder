@@ -36,6 +36,7 @@ rust-embed = "8"
 mime_guess = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5"
 
 [[bin]]
 name = "murder-server"
