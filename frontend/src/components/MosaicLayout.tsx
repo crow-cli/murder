@@ -1,22 +1,24 @@
 /** Mosaic layout with typed tiles — backend-persisted via SQLite */
 import { useState, useCallback, useEffect, useRef } from "react";
-import { DndProvider, useDrag, useDrop } from "react-dnd";
-import { HTML5Backend } from "react-dnd-html5-backend";
-import { Mosaic, MosaicNode, MosaicBranch } from "react-mosaic-component";
+import { useDrag, useDrop } from "react-dnd";
+import { Mosaic, MosaicNode, MosaicBranch, MosaicWindow } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import EditorPane, { setModelContent } from "./EditorPane";
 import TerminalPane from "./TerminalPane";
+import ChatTile from "./ChatTile";
+import type { AgentConfig } from "../lib/acp-client";
 import { ws } from "../lib/ws-client";
 import {
   setGlobalOpenFile,
   setGlobalOpenTerminal,
+  setGlobalOpenChat,
   setGetLayout,
 } from "../lib/workspace-context";
 import { FileIcon } from "../lib/file-icons";
 import * as settings from "../lib/settings";
 
 // ── Tile metadata registry ───────────────────────────────────────────────────
-export type TileType = "editor" | "terminal";
+export type TileType = "editor" | "terminal" | "chat";
 
 export interface TileMeta {
   type: TileType;
@@ -37,6 +39,12 @@ export interface TerminalTileState {
   activeIndex: number;
 }
 
+/** Each chat tile tracks its own sessions */
+export interface ChatTileState {
+  sessions: string[]; // session IDs
+  activeIndex: number;
+}
+
 /** Registry: viewId → tile metadata + per-tile state */
 const tileRegistry = new Map<
   ViewId,
@@ -44,6 +52,7 @@ const tileRegistry = new Map<
     meta: TileMeta;
     editorState?: EditorTileState;
     terminalState?: TerminalTileState;
+    chatState?: ChatTileState;
     pendingFiles?: string[];
   }
 >();
@@ -126,6 +135,7 @@ export function registerTile(id: ViewId, type: TileType) {
     editorState: type === "editor" ? { files: [], activeIndex: -1 } : undefined,
     terminalState:
       type === "terminal" ? { terminals: [], activeIndex: -1 } : undefined,
+    chatState: type === "chat" ? { sessions: [], activeIndex: -1 } : undefined,
     pendingFiles: [],
   });
 }
@@ -141,6 +151,10 @@ export function getEditorState(id: ViewId): EditorTileState | null {
 
 export function getTerminalState(id: ViewId): TerminalTileState | null {
   return tileRegistry.get(id)?.terminalState ?? null;
+}
+
+export function getChatState(id: ViewId): ChatTileState | null {
+  return tileRegistry.get(id)?.chatState ?? null;
 }
 
 /** Global accessor for current workspace (set by MosaicLayout). */
@@ -753,9 +767,10 @@ function TerminalTile({
 // ─ MosaicLayout ──────────────────────────────────────────────────────────────
 interface MosaicLayoutProps {
   workspaceRoot: string | null;
+  agentConfig: AgentConfig;
 }
 
-export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
+export default function MosaicLayout({ workspaceRoot, agentConfig }: MosaicLayoutProps) {
   const [layout, setLayout] = useState<MosaicNode<ViewId> | null>(null);
   const [minimizedState, setMinimizedState] = useState<Set<ViewId>>(new Set());
   const [wordWrap, setWordWrap] = useState(
@@ -945,7 +960,7 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
             const entry = tileRegistry.get(id);
             if (entry) {
               const stateJson = JSON.stringify(
-                entry.editorState ?? entry.terminalState ?? {},
+                entry.editorState ?? entry.terminalState ?? entry.chatState ?? {},
               );
               debounceSaveTileState(
                 currentWs,
@@ -1030,6 +1045,7 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     const handlers = {
       "toggle-minimize-editors": () => toggleTiles("editor"),
       "toggle-minimize-terminals": () => toggleTiles("terminal"),
+      "toggle-minimize-chats": () => toggleTiles("chat"),
     };
     for (const [event, handler] of Object.entries(handlers)) {
       window.addEventListener(event, handler);
@@ -1047,9 +1063,11 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
   useEffect(() => {
     (window as any).__toggleEditors = () => toggleTiles("editor");
     (window as any).__toggleTerminals = () => toggleTiles("terminal");
+    (window as any).__toggleChats = () => toggleTiles("chat");
     return () => {
       delete (window as any).__toggleEditors;
       delete (window as any).__toggleTerminals;
+      delete (window as any).__toggleChats;
     };
   }, [toggleTiles]);
 
@@ -1097,6 +1115,12 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
                   activeIndex: parsed.activeIndex ?? -1,
                 };
                 lastActiveTile.set("terminal", tile.tileId);
+              } else if (tile.tileType === "chat" && parsed.sessions) {
+                entry.chatState = {
+                  sessions: parsed.sessions,
+                  activeIndex: parsed.activeIndex ?? -1,
+                };
+                lastActiveTile.set("chat", tile.tileId);
               }
             } catch {
               // Invalid state JSON — use defaults
@@ -1172,6 +1196,27 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
   }, []);
 
   const openTerminalInTile = useCallback(() => {
+    // Check if there's a minimized terminal tile — restore it
+    for (const [id, entry] of tileRegistry) {
+      if (entry.meta.type === "terminal" && minimizedTiles.has(id)) {
+        minimizedTiles.delete(id);
+        setMinimizedState((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        setLayout((prev) => {
+          let result = prev;
+          if (!result) result = id;
+          else result = addToLastLeaf(result, id);
+          const ws = getCurrentWorkspace();
+          if (ws) debounceSaveLayout(ws, JSON.stringify(result));
+          return result;
+        });
+        return;
+      }
+    }
+
     // Open in LAST ACTIVE terminal tile
     const lastId = lastActiveTile.get("terminal");
     if (lastId && !minimizedTiles.has(lastId)) {
@@ -1202,10 +1247,60 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     });
   }, []);
 
+  const openChatInTile = useCallback(() => {
+    // Check if there's a minimized chat tile — restore it
+    for (const [id, entry] of tileRegistry) {
+      if (entry.meta.type === "chat" && minimizedTiles.has(id)) {
+        minimizedTiles.delete(id);
+        setMinimizedState((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        setLayout((prev) => {
+          let result = prev;
+          if (!result) result = id;
+          else result = addToLastLeaf(result, id);
+          const ws = getCurrentWorkspace();
+          if (ws) debounceSaveLayout(ws, JSON.stringify(result));
+          return result;
+        });
+        return;
+      }
+    }
+
+    // Open in LAST ACTIVE chat tile
+    const lastId = lastActiveTile.get("chat");
+    if (lastId && !minimizedTiles.has(lastId)) {
+      window.dispatchEvent(new CustomEvent("tile-focus-chat", { detail: { tileId: lastId } }));
+      return;
+    }
+
+    for (const [id, entry] of tileRegistry) {
+      if (entry.meta.type === "chat" && !minimizedTiles.has(id)) {
+        window.dispatchEvent(new CustomEvent("tile-focus-chat", { detail: { tileId: id } }));
+        return;
+      }
+    }
+    // No visible chat tile — create one
+    const id = uid("chat");
+    registerTile(id, "chat");
+    lastActiveTile.set("chat", id);
+    const currentWs = workspaceRef.current;
+    setLayout((prev) => {
+      let next: MosaicNode<ViewId>;
+      if (!prev) next = id;
+      else next = addToLastLeaf(prev, id);
+      if (currentWs) debounceSaveLayout(currentWs, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     setGlobalOpenFile(openFileInTile);
     setGlobalOpenTerminal(openTerminalInTile);
-  }, [openFileInTile, openTerminalInTile]);
+    setGlobalOpenChat(openChatInTile);
+  }, [openFileInTile, openTerminalInTile, openChatInTile]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -1238,7 +1333,7 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
 
   // ── Render tile ───────────────────────────────────────────────────────────
   const renderTile = useCallback(
-    (viewId: ViewId, _path: MosaicBranch[]) => {
+    (viewId: ViewId, path: MosaicBranch[]) => {
       const entry = tileRegistry.get(viewId);
       const tileType: TileType =
         entry?.meta.type ??
@@ -1285,32 +1380,56 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
         );
       };
 
+      const tileContent =
+        tileType === "editor" ? (
+          <EditorTile
+            tileId={viewId}
+            workspaceRoot={workspaceRoot}
+            onRemove={() => removeTile(viewId)}
+            wordWrap={wordWrap}
+            onFocus={() => lastActiveTile.set("editor", viewId)}
+            onRegisterDrop={registerDrop}
+            onUnregisterDrop={unregisterDrop}
+          />
+        ) : tileType === "terminal" ? (
+          <TerminalTile
+            tileId={viewId}
+            workspaceRoot={workspaceRoot}
+            onRemove={() => removeTile(viewId)}
+            onFocus={() => lastActiveTile.set("terminal", viewId)}
+            onRegisterDrop={registerDrop}
+            onUnregisterDrop={unregisterDrop}
+          />
+        ) : (
+          <ChatTile
+            tileId={viewId}
+            workspaceRoot={workspaceRoot}
+            agentConfig={agentConfig}
+            onRemove={() => removeTile(viewId)}
+            onFocus={() => lastActiveTile.set("chat", viewId)}
+          />
+        );
+
+      // Wrap in MosaicWindow for drag-and-drop tile rearrangement.
+      // renderToolbar returns a thin invisible strip — the drag handle.
+      // path.length > 0 check prevents dragging the root tile.
+      const isDraggable = path.length > 0;
+
       return (
-        <DropTarget>
-          {tileType === "editor" ? (
-            <EditorTile
-              tileId={viewId}
-              workspaceRoot={workspaceRoot}
-              onRemove={() => removeTile(viewId)}
-              wordWrap={wordWrap}
-              onFocus={() => lastActiveTile.set("editor", viewId)}
-              onRegisterDrop={registerDrop}
-              onUnregisterDrop={unregisterDrop}
-            />
-          ) : (
-            <TerminalTile
-              tileId={viewId}
-              workspaceRoot={workspaceRoot}
-              onRemove={() => removeTile(viewId)}
-              onFocus={() => lastActiveTile.set("terminal", viewId)}
-              onRegisterDrop={registerDrop}
-              onUnregisterDrop={unregisterDrop}
-            />
+        <MosaicWindow<ViewId>
+          title={viewId}
+          path={path}
+          draggable={isDraggable}
+          renderToolbar={(_props, _draggable) => (
+            <div className="mosaic-drag-strip" />
           )}
-        </DropTarget>
+          className="murder-mosaic-window"
+        >
+          <DropTarget>{tileContent}</DropTarget>
+        </MosaicWindow>
       );
     },
-    [workspaceRoot, removeTile, wordWrap, registerDrop, unregisterDrop],
+    [workspaceRoot, agentConfig, removeTile, wordWrap, registerDrop, unregisterDrop],
   );
 
   // ── Persist layout changes ────────────────────────────────────────────────
@@ -1320,29 +1439,27 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
   }, [layout, workspaceRoot]);
 
   return (
-    <DndProvider backend={HTML5Backend}>
-      <div className="w-full h-full">
-        {layout ? (
-          <Mosaic<ViewId>
-            value={layout}
-            onChange={(newLayout) => {
-              if (newLayout !== null) setLayout(newLayout);
-            }}
-            renderTile={renderTile}
-            className="murder-mosaic-theme"
-            resize={{ minimumPaneSizePercentage: 10 }}
-          />
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full gap-4 opacity-40">
-            <div className="text-5xl">◆</div>
-            <div className="text-lg font-light">Murder IDE</div>
-            <div className="text-xs">
-              Open a file from the explorer or press Ctrl+P
-            </div>
+    <div className="w-full h-full">
+      {layout ? (
+        <Mosaic<ViewId>
+          value={layout}
+          onChange={(newLayout) => {
+            if (newLayout !== null) setLayout(newLayout);
+          }}
+          renderTile={renderTile}
+          className="murder-mosaic-theme"
+          resize={{ minimumPaneSizePercentage: 10 }}
+        />
+      ) : (
+        <div className="flex flex-col items-center justify-center h-full gap-4 opacity-40">
+          <div className="text-5xl">◆</div>
+          <div className="text-lg font-light">Murder IDE</div>
+          <div className="text-xs">
+            Open a file from the explorer or press Ctrl+P
           </div>
-        )}
-      </div>
-    </DndProvider>
+        </div>
+      )}
+    </div>
   );
 }
 

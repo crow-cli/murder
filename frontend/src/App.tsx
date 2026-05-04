@@ -18,7 +18,7 @@ import { MenuBar, type MenuGroup } from "./components/MenuBar";
 import * as settings from "./lib/settings";
 import { ws } from "./lib/ws-client";
 import { getFileIcon } from "./lib/file-icons";
-import { globalOpenFile, globalOpenTerminal } from "./lib/workspace-context";
+import { globalOpenFile, globalOpenTerminal, globalOpenChat } from "./lib/workspace-context";
 import type { AgentConfig } from "./lib/acp-client";
 import * as acpStore from "./lib/acp-store";
 
@@ -246,21 +246,7 @@ export default function App() {
       if (ctrl && e.key === "l" && !isInput) {
         e.preventDefault();
         e.stopPropagation();
-        setActiveActivity("chat");
-        if (acpStore.getSessionIds().length === 0 && workspaceRootRef.current) {
-          handleNewChatSessionRef.current();
-        } else {
-          setChatSessionVisible((v) => {
-            if (!v) {
-              setChatVisible(false);
-              setChatSessionMinimized(false);
-              return true;
-            }
-            // Already visible — toggle minimized
-            setChatSessionMinimized((m) => !m);
-            return true;
-          });
-        }
+        globalOpenChat();
         return;
       }
       if (ctrl && e.shiftKey && e.key === "R" && !isInput) {
@@ -430,16 +416,7 @@ export default function App() {
           setSidebarVisible(true);
           break;
         case "chat":
-          setActiveActivity("chat");
-          if (acpStore.getSessionIds().length === 0 && workspaceRoot) {
-            handleNewChatSession();
-          } else if (!chatSessionVisible) {
-            setChatVisible(false);
-            setChatSessionVisible(true);
-            setChatSessionMinimized(false);
-          } else {
-            setChatSessionMinimized((m) => !m);
-          }
+          globalOpenChat();
           break;
         case "rpc_log":
           setActiveActivity("rpc");
@@ -454,7 +431,8 @@ export default function App() {
   const openFilesList = Array.from(openFiles.values());
 
   // Determine which side panels are visible
-  const showLeftPanel = chatVisible && activeActivity === "chat" && !chatSessionVisible;
+  // Chat is now a mosaic tile — left panel no longer used for chat
+  const showLeftPanel = false;
   const showRightPanel =
     sidebarVisible &&
     (activeActivity === "explorer" ||
@@ -754,7 +732,7 @@ export default function App() {
 
           {/* Mosaic layout — replaces editor + terminal */}
           <div className="flex-1 overflow-hidden">
-            <MosaicLayout workspaceRoot={workspaceRoot} />
+            <MosaicLayout workspaceRoot={workspaceRoot} agentConfig={agentConfig} />
           </div>
         </div>
 
@@ -952,10 +930,15 @@ export default function App() {
         onToggleTerminals={() => {
           (window as any).__toggleTerminals?.();
         }}
+        onToggleChats={() => {
+          (window as any).__toggleChats?.();
+        }}
         editorsMinimized={getMinimizedTileCount("editor") > 0}
         terminalsMinimized={getMinimizedTileCount("terminal") > 0}
+        chatsMinimized={getMinimizedTileCount("chat") > 0}
         editorTileCount={getMinimizedTileCount("editor")}
         terminalTileCount={getMinimizedTileCount("terminal")}
+        chatTileCount={getMinimizedTileCount("chat")}
       />
 
       {showFolderPicker && (

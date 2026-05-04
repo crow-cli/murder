@@ -131,12 +131,26 @@ textarea {
 .murder-mosaic-theme .mosaic-root {
     background: var(--color-background-dark) !important;
 }
+/* Thin drag strip at top of each tile — the tile rearrange handle */
 .murder-mosaic-theme .mosaic-window-toolbar {
-    display: none !important;
-    height: 0 !important;
-    min-height: 0 !important;
+    height: 8px !important;
+    min-height: 8px !important;
     padding: 0 !important;
     margin: 0 !important;
+    background: linear-gradient(to bottom, var(--color-border), var(--color-background-dark)) !important;
+    border-bottom: 1px solid var(--color-border) !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    flex-shrink: 0;
+    cursor: move;
+}
+.murder-mosaic-theme .mosaic-window-toolbar .mosaic-drag-strip {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+}
+.murder-mosaic-theme .mosaic-window-title {
+    display: none !important;
 }
 .murder-mosaic-theme .mosaic-window-body {
     background: var(--color-background-dark) !important;

@@ -9,6 +9,7 @@ import {
   IconTerminal,
   IconEditor,
 } from "../lib/icons";
+import { globalOpenChat } from "../lib/workspace-context";
 
 export type ActivityId =
   | "chat"
@@ -45,6 +46,12 @@ interface BottomBarProps {
   editorTileCount: number;
   /** Count of visible terminal tiles */
   terminalTileCount: number;
+  /** Toggle minimization of all chat tiles */
+  onToggleChats: () => void;
+  /** Whether chat tiles are currently minimized */
+  chatsMinimized: boolean;
+  /** Count of visible chat tiles */
+  chatTileCount: number;
 }
 
 interface ActivityDef {
@@ -63,6 +70,14 @@ const LEFT_ACTIVITIES: ActivityDef[] = [
   { id: "rpc", Icon: IconRpc, label: "ACP Log" },
 ];
 
+function getActivitiesWithBadges(
+  chatTileCount: number,
+): ActivityDef[] {
+  return LEFT_ACTIVITIES.map((a) =>
+    a.id === "chat" && chatTileCount > 0 ? { ...a, badge: chatTileCount } : a,
+  );
+}
+
 export default function BottomBar({
   active,
   onActivate,
@@ -78,10 +93,13 @@ export default function BottomBar({
   workspaceName,
   onToggleEditors,
   onToggleTerminals,
+  onToggleChats,
   editorsMinimized,
   terminalsMinimized,
+  chatsMinimized,
   editorTileCount,
   terminalTileCount,
+  chatTileCount,
 }: BottomBarProps) {
   const isActive = (id: ActivityId) => active === id;
   const iconColor = (id: ActivityId) =>
@@ -98,11 +116,17 @@ export default function BottomBar({
     >
       {/* Left: activity icons */}
       <div className="flex items-center gap-1">
-        {LEFT_ACTIVITIES.map(({ id, Icon, label, badge }) => (
+        {getActivitiesWithBadges(chatTileCount).map(({ id, Icon, label, badge }) => (
           <button
             key={id}
             title={label}
-            onClick={() => onActivate(id)}
+            onClick={() => {
+              if (id === "chat") {
+                globalOpenChat();
+              } else {
+                onActivate(id);
+              }
+            }}
             className="w-[28px] h-[28px] flex items-center justify-center bg-transparent border-none cursor-pointer rounded-sm hover:bg-[var(--color-hover)] transition-colors"
             style={{ color: iconColor(id) }}
           >
@@ -194,6 +218,29 @@ export default function BottomBar({
           {terminalTileCount > 0 && (
             <span className="absolute bottom-0 right-0 bg-[var(--color-muted)] text-[var(--color-foreground-dim)] rounded-full w-[14px] h-[14px] text-[8px] font-bold flex items-center justify-center">
               {terminalTileCount}
+            </span>
+          )}
+        </button>
+
+        {/* Chat toggle — minimize/restore all chat tiles */}
+        <button
+          title={
+            chatsMinimized
+              ? `Restore chat (${chatTileCount} hidden)`
+              : "Minimize all chats"
+          }
+          onClick={onToggleChats}
+          className="w-[28px] h-[28px] flex items-center justify-center bg-transparent border-none cursor-pointer rounded-sm hover:bg-[var(--color-hover)] transition-colors relative"
+          style={{
+            color: chatsMinimized
+              ? "var(--color-primary)"
+              : iconColor("explorer"),
+          }}
+        >
+          <IconChat size={16} />
+          {chatTileCount > 0 && (
+            <span className="absolute bottom-0 right-0 bg-[var(--color-muted)] text-[var(--color-foreground-dim)] rounded-full w-[14px] h-[14px] text-[8px] font-bold flex items-center justify-center">
+              {chatTileCount}
             </span>
           )}
         </button>

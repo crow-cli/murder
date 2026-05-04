@@ -71,6 +71,7 @@ export function useWorkspace() {
 // Global accessors for non-React code
 let _globalOpenFile: ((path: string) => Promise<void>) | null = null;
 let _globalOpenTerminal: (() => void) | null = null;
+let _globalOpenChat: (() => void) | null = null;
 let _getLayout: (() => MosaicNode<ViewId> | null) | null = null;
 
 export function setGlobalOpenFile(fn: (path: string) => Promise<void>) {
@@ -79,6 +80,10 @@ export function setGlobalOpenFile(fn: (path: string) => Promise<void>) {
 
 export function setGlobalOpenTerminal(fn: () => void) {
   _globalOpenTerminal = fn;
+}
+
+export function setGlobalOpenChat(fn: () => void) {
+  _globalOpenChat = fn;
 }
 
 export function setGetLayout(fn: () => MosaicNode<ViewId> | null) {
@@ -91,6 +96,10 @@ export function globalOpenFile(path: string) {
 
 export function globalOpenTerminal() {
   return _globalOpenTerminal?.();
+}
+
+export function globalOpenChat() {
+  return _globalOpenChat?.();
 }
 
 export function getMosaicLayout(): MosaicNode<ViewId> | null {
