@@ -8,11 +8,25 @@ import { FileIcon } from "../lib/file-icons";
 function getLanguage(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() || "";
   const map: Record<string, string> = {
-    rs: "rust", ts: "typescript", tsx: "typescriptreact",
-    js: "javascript", jsx: "javascriptreact", py: "python",
-    go: "go", java: "java", c: "c", cpp: "cpp", cs: "csharp",
-    css: "css", html: "html", json: "json", md: "markdown",
-    yml: "yaml", yaml: "yaml", toml: "toml", sh: "shell",
+    rs: "rust",
+    ts: "typescript",
+    tsx: "typescriptreact",
+    js: "javascript",
+    jsx: "javascriptreact",
+    py: "python",
+    go: "go",
+    java: "java",
+    c: "c",
+    cpp: "cpp",
+    cs: "csharp",
+    css: "css",
+    html: "html",
+    json: "json",
+    md: "markdown",
+    yml: "yaml",
+    yaml: "yaml",
+    toml: "toml",
+    sh: "shell",
   };
   return map[ext] || "plaintext";
 }
@@ -27,8 +41,8 @@ export interface TabItem {
 }
 
 export interface WorkspacePaneHandle {
-  openFile: (path: string) => Promise<string | null>; // returns tabId
-  openTerminal: () => string; // returns tabId
+  openFile: (path: string) => Promise<string | null>;
+  openTerminal: () => string;
 }
 
 interface WorkspacePaneProps {
@@ -37,26 +51,40 @@ interface WorkspacePaneProps {
   onActivate?: (handle: WorkspacePaneHandle) => void;
 }
 
-export default function WorkspacePane({ id, workspaceRoot, onActivate }: WorkspacePaneProps) {
+export default function WorkspacePane({
+  id,
+  workspaceRoot,
+  onActivate,
+}: WorkspacePaneProps) {
   const [tabs, setTabs] = useState<TabItem[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const paneRef = useRef<WorkspacePaneHandle | null>(null);
 
-  // Create handle and register on mount
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+  const isEditorActive = activeTab?.type === "file";
+  const isTerminalActive = activeTab?.type === "terminal";
+  const activeFilePath =
+    activeTab?.type === "file" ? (activeTab.path ?? null) : null;
+  const activeFileLanguage =
+    activeTab?.type === "file"
+      ? (activeTab.language ?? "plaintext")
+      : "plaintext";
+
   useEffect(() => {
+    let terminalCounter = 0;
     const handle: WorkspacePaneHandle = {
       openFile: async (path: string) => {
-        const existing = tabs.find(t => t.type === "file" && t.path === path);
+        const existing = tabs.find((t) => t.type === "file" && t.path === path);
         if (existing) {
           setActiveTabId(existing.id);
           return existing.id;
         }
         try {
-          const result = await ws.invoke<{ content: string }>("read_file", { path });
+          const result = await ws.invoke<{ content: string }>("read_file", {
+            path,
+          });
           const language = getLanguage(path);
-          const content = result.content;
-          // Populate Monaco model registry so EditorPane can find the content
-          setModelContent(path, content, language);
+          setModelContent(path, result.content, language);
           const tabId = `file-${path}-${Date.now()}`;
           const newTab: TabItem = {
             id: tabId,
@@ -65,7 +93,7 @@ export default function WorkspacePane({ id, workspaceRoot, onActivate }: Workspa
             title: path.split("/").pop() || path,
             language,
           };
-          setTabs(prev => [...prev, newTab]);
+          setTabs((prev) => [...prev, newTab]);
           setActiveTabId(tabId);
           return tabId;
         } catch (e) {
@@ -74,9 +102,15 @@ export default function WorkspacePane({ id, workspaceRoot, onActivate }: Workspa
         }
       },
       openTerminal: () => {
-        const tabId = `terminal-${Date.now()}`;
-        const newTab: TabItem = { id: tabId, type: "terminal", title: "Terminal" };
-        setTabs(prev => [...prev, newTab]);
+        terminalCounter++;
+        const tabId = `terminal-${Date.now()}-${terminalCounter}`;
+        const tabNum = tabs.filter((t) => t.type === "terminal").length + 1;
+        const newTab: TabItem = {
+          id: tabId,
+          type: "terminal",
+          title: `Terminal ${tabNum}`,
+        };
+        setTabs((prev) => [...prev, newTab]);
         setActiveTabId(tabId);
         return tabId;
       },
@@ -85,39 +119,38 @@ export default function WorkspacePane({ id, workspaceRoot, onActivate }: Workspa
     onActivate?.(handle);
   }, []);
 
-  // Update tabs reference in handle (closure captures stale state)
-  useEffect(() => {
-    if (paneRef.current) {
-      // The handle methods are stable, they read from the latest tabs via state
-    }
-  }, [tabs]);
+  const openFile = useCallback(
+    async (path: string) => paneRef.current?.openFile(path) ?? null,
+    [],
+  );
+  const openTerminal = useCallback(
+    () => paneRef.current?.openTerminal() ?? "",
+    [],
+  );
 
-  // Open a file in this workspace
-  const openFile = useCallback(async (path: string) => {
-    return paneRef.current?.openFile(path) ?? null;
-  }, []);
+  const closeTab = useCallback(
+    (tabId: string) => {
+      setTabs((prev) => {
+        const next = prev.filter((t) => t.id !== tabId);
+        if (activeTabId === tabId)
+          setActiveTabId(next.length > 0 ? next[next.length - 1].id : null);
+        return next;
+      });
+    },
+    [activeTabId],
+  );
 
-  // Open a terminal in this workspace
-  const openTerminal = useCallback(() => {
-    return paneRef.current?.openTerminal() ?? "";
-  }, []);
-
-  // Close a tab
-  const closeTab = useCallback((tabId: string) => {
-    setTabs(prev => {
-      const next = prev.filter(t => t.id !== tabId);
-      if (activeTabId === tabId) {
-        setActiveTabId(next.length > 0 ? next[next.length - 1].id : null);
-      }
-      return next;
-    });
-  }, [activeTabId]);
-
-  const activeTab = tabs.find(t => t.id === activeTabId);
+  // Pick a file to keep the EditorPane mounted even when terminal is active
+  const mountedFilePath =
+    activeFilePath ?? tabs.find((t) => t.type === "file")?.path ?? null;
+  const mountedFileLanguage =
+    activeFileLanguage !== "plaintext"
+      ? activeFileLanguage
+      : (tabs.find((t) => t.type === "file")?.language ?? "plaintext");
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-background-dark)]">
-      {/* Tab Bar */}
+      {/* ── Tab Bar ──────────────────────────────────────────────────── */}
       {tabs.length > 0 && (
         <div className="flex bg-[var(--color-background)] border-b border-[var(--color-border)] overflow-x-auto shrink-0 h-[35px]">
           {tabs.map((tab) => {
@@ -127,8 +160,12 @@ export default function WorkspacePane({ id, workspaceRoot, onActivate }: Workspa
                 key={tab.id}
                 className="flex items-center gap-1.5 px-3 text-[13px] cursor-pointer select-none border-r border-[var(--color-border)] min-w-0 relative transition-colors"
                 style={{
-                  backgroundColor: isActive ? "var(--color-card)" : "transparent",
-                  color: isActive ? "var(--color-foreground)" : "var(--color-foreground-dim)",
+                  backgroundColor: isActive
+                    ? "var(--color-card)"
+                    : "transparent",
+                  color: isActive
+                    ? "var(--color-foreground)"
+                    : "var(--color-foreground-dim)",
                 }}
                 onClick={() => setActiveTabId(tab.id)}
               >
@@ -144,7 +181,9 @@ export default function WorkspacePane({ id, workspaceRoot, onActivate }: Workspa
                   {tab.title}
                 </span>
                 {tab.dirty && (
-                  <span className="text-[8px] leading-none text-[var(--color-primary)]">●</span>
+                  <span className="text-[8px] leading-none text-[var(--color-primary)]">
+                    ●
+                  </span>
                 )}
                 <button
                   className="ml-auto h-5 w-5 p-0 rounded-sm text-[var(--color-active)] hover:text-[var(--color-destructive)] hover:bg-[var(--color-border)] flex items-center justify-center"
@@ -161,29 +200,45 @@ export default function WorkspacePane({ id, workspaceRoot, onActivate }: Workspa
         </div>
       )}
 
-      {/* Content Area */}
-      <div className="flex-1 overflow-hidden">
-        {tabs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4 opacity-50">
+      {/* ── Stacking Container ───────────────────────────────────────── */}
+      {/* Editor always at z-1, terminal at z-10 when active (covers it). */}
+      {/* Nothing is ever hidden with opacity/display — z-index layering. */}
+      <div className="relative flex-1 min-h-0 min-w-0 overflow-hidden">
+        {tabs.length === 0 && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 opacity-50">
             <div className="text-4xl">◆</div>
             <div className="text-lg font-light">No files open</div>
             <div className="text-xs">Use Ctrl+P to open a file</div>
           </div>
-        ) : activeTab ? (
-          <div className="h-full relative">
-            {activeTab.type === "file" && activeTab.path && (
-              <EditorPane path={activeTab.path} language={activeTab.language || "plaintext"} />
-            )}
-            {activeTab.type === "terminal" && workspaceRoot && (
-              <TerminalPane workspaceRoot={workspaceRoot} />
-            )}
-            {activeTab.type === "terminal" && !workspaceRoot && (
-              <div className="flex items-center justify-center h-full opacity-50">
-                Open a folder to use the terminal
-              </div>
-            )}
+        )}
+
+        {/* Editor — always mounted at z-1 */}
+        {mountedFilePath && (
+          <div className="absolute inset-0 z-[1]">
+            <EditorPane path={mountedFilePath} language={mountedFileLanguage} isActive={isEditorActive} />
           </div>
-        ) : null}
+        )}
+
+        {/* Terminals — z-10 when active (covers editor), z-0 when not */}
+        {tabs
+          .filter((t) => t.type === "terminal")
+          .map((termTab) => {
+            const isActive = termTab.id === activeTabId;
+            return (
+              <div
+                key={termTab.id}
+                className={`absolute inset-0 bg-[var(--color-background-deeper)] ${isActive ? "z-[10]" : "z-0"}`}
+              >
+                {workspaceRoot ? (
+                  <TerminalPane workspaceRoot={workspaceRoot} />
+                ) : (
+                  <div className="flex items-center justify-center h-full opacity-50">
+                    Open a folder to use the terminal
+                  </div>
+                )}
+              </div>
+            );
+          })}
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import EditorPane, {
   type EditorPaneHandle,
   setModelContent,
   disposeModel,
+  getModelContent,
 } from "./components/EditorPane";
 import ExplorerPane from "./components/ExplorerPane";
 import ChatPane from "./components/ChatPane";
@@ -17,7 +18,7 @@ import { MenuBar, type MenuGroup } from "./components/MenuBar";
 import * as settings from "./lib/settings";
 import { ws } from "./lib/ws-client";
 import { getFileIcon } from "./lib/file-icons";
-import { globalOpenFile } from "./lib/workspace-context";
+import { globalOpenFile, globalOpenTerminal } from "./lib/workspace-context";
 import type { AgentConfig } from "./lib/acp-client";
 import * as acpStore from "./lib/acp-store";
 
@@ -54,7 +55,6 @@ export default function App() {
   const [_menuOpen, setMenuOpen] = useState<string | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
   const [cursorCol, setCursorCol] = useState(1);
-  const [terminalVisible, setTerminalVisible] = useState(false);
   const [chatVisible, setChatVisible] = useState(true);
   const [chatSessionVisible, setChatSessionVisible] = useState(false);
   const [chatSessionMinimized, setChatSessionMinimized] = useState(false);
@@ -132,25 +132,26 @@ export default function App() {
   // Auto-open most recent workspace after settings are loaded
   useEffect(() => {
     if (!settingsLoaded || workspaceRoot) return;
-    const recent = settings.getSettings().recentlyOpened;
-    if (recent.length > 0) {
-      const path = recent[0];
-      ws.invoke<{ root: string }>("workspace_open", { path })
-        .then(() => {
-          setWorkspaceRoot(path);
-          setOpenFiles(new Map());
-          setActiveFile(null);
-          setDirtyFiles(new Set());
-          setChatSessionVisible(false);
-          setChatSessionMinimized(false);
-          setChatVisible(false);
-          setActiveActivity("explorer");
-        })
-        .catch((e) => {
-          // Workspace path may no longer exist — silently ignore
-          console.warn("Failed to auto-open workspace:", path, e);
-        });
-    }
+    settings.getRecentWorkspaces(1).then((recent) => {
+      if (recent.length > 0) {
+        const path = recent[0];
+        ws.invoke<{ root: string }>("workspace_open", { path })
+          .then(() => {
+            setWorkspaceRoot(path);
+            setOpenFiles(new Map());
+            setActiveFile(null);
+            setDirtyFiles(new Set());
+            setChatSessionVisible(false);
+            setChatSessionMinimized(false);
+            setChatVisible(false);
+            setActiveActivity("explorer");
+          })
+          .catch((e) => {
+            // Workspace path may no longer exist — silently ignore
+            console.warn("Failed to auto-open workspace:", path, e);
+          });
+      }
+    });
   }, [settingsLoaded, workspaceRoot]);
 
   // Save file
@@ -159,7 +160,7 @@ export default function App() {
       if (savingRef.current) return;
       setSaving(true);
       try {
-        const content = editorRef.current?.getContent() ?? "";
+        const content = getModelContent(path) ?? "";
         await ws.invoke("document_set_content", { path, content });
         await ws.invoke("document_save", { path });
         setDirtyFiles((prev) => {
@@ -230,7 +231,7 @@ export default function App() {
       if (ctrl && e.key === "`" && !isInput) {
         e.preventDefault();
         e.stopPropagation();
-        setTerminalVisible((v) => !v);
+        globalOpenTerminal();
         return;
       }
       if (e.altKey && e.key === "z") {
@@ -303,9 +304,6 @@ export default function App() {
     try {
       await ws.invoke<{ root: string }>("workspace_open", { path });
       setWorkspaceRoot(path);
-      setOpenFiles(new Map());
-      setActiveFile(null);
-      setDirtyFiles(new Set());
       // Track in recently opened
       await settings.addRecentlyOpened(path);
       // Agent chat stays hidden — spawns only when Ctrl+L or chat icon is clicked
@@ -401,7 +399,7 @@ export default function App() {
           setSidebarVisible((v) => !v);
           break;
         case "toggle_terminal":
-          setTerminalVisible((v) => !v);
+          globalOpenTerminal();
           break;
         case "word_wrap":
           setWordWrap((v) => {
@@ -422,10 +420,10 @@ export default function App() {
           setSidebarVisible(true);
           break;
         case "terminal":
-          setTerminalVisible(true);
+          globalOpenTerminal();
           break;
         case "new_terminal":
-          setTerminalVisible(true);
+          globalOpenTerminal();
           break;
         case "extensions":
           setActiveActivity("extensions");
@@ -952,7 +950,7 @@ export default function App() {
 
       {showFolderPicker && (
         <FolderPicker
-          initialPath={settings.getSettings().recentlyOpened[0] || "/home/thomas"}
+          initialPath="/home/thomas"
           onSelect={handleOpenFolder}
           onClose={() => setShowFolderPicker(false)}
         />

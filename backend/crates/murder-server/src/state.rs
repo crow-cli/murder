@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use murder_acp::AgentManager;
+use murder_db::Database;
 use murder_terminal::TerminalManager;
 use murder_text::TextModel;
 use murder_workspace::{Workspace, WorktreeState};
@@ -24,12 +25,16 @@ pub struct AppState {
     pub worktree_state: Mutex<WorktreeState>,
     /// Broadcast channel for worktree events → all connected WebSocket clients.
     pub worktree_events_tx: broadcast::Sender<String>,
+    /// SQLite database for session state (recent workspaces, layout, etc.).
+    /// Wrapped in Mutex because rusqlite's Connection is !Sync.
+    pub db: Mutex<Database>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         let tm = TerminalManager::new();
         let worktree_events_tx = broadcast::Sender::new(256);
+        let db = Database::open_default().expect("failed to open state database");
         Self {
             documents: DashMap::new(),
             workspace: Mutex::new(None),
@@ -38,11 +43,13 @@ impl AppState {
             agents: AgentManager::new(),
             worktree_state: Mutex::new(WorktreeState::new(worktree_events_tx.clone())),
             worktree_events_tx,
+            db: Mutex::new(db),
         }
     }
 
     pub fn with_terminals(tm: TerminalManager, tx: broadcast::Sender<String>) -> Self {
         let worktree_events_tx = broadcast::Sender::new(256);
+        let db = Database::open_default().expect("failed to open state database");
         Self {
             documents: DashMap::new(),
             workspace: Mutex::new(None),
@@ -51,6 +58,7 @@ impl AppState {
             agents: AgentManager::new(),
             worktree_state: Mutex::new(WorktreeState::new(worktree_events_tx.clone())),
             worktree_events_tx,
+            db: Mutex::new(db),
         }
     }
 

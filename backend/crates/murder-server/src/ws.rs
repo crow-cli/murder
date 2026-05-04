@@ -279,6 +279,10 @@ async fn handle_message(text: &str, app: &App) -> Value {
         // Config methods
         "get_config_path" => handlers::handle_get_config_path(&state, &request.params),
 
+        // Session state methods (SQLite-backed)
+        "get_recent_workspaces" => handlers::handle_get_recent_workspaces(&state, &request.params),
+        "add_recent_workspace" => handlers::handle_add_recent_workspace(&state, &request.params),
+
         unknown => Err(format!("unknown method: {unknown}")),
     };
 

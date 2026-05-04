@@ -62,7 +62,9 @@ export default function TerminalPane({ workspaceRoot }: TerminalPaneProps) {
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
       theme: TERMINAL_THEME,
       scrollback: 10000,
-      convertEol: true,
+      // convertEol removed — xterm.js handles \r\n from PTY natively.
+      // Setting convertEol:true causes \n→\r\n conversion which overwrites
+      // lines instead of wrapping when output exceeds terminal width.
     });
 
     const fitAddon = new FitAddon();
@@ -77,9 +79,9 @@ export default function TerminalPane({ workspaceRoot }: TerminalPaneProps) {
     // Handle resize
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit();
-      if (termIdRef.current !== null) {
+      if (termIdRef.current !== null && containerRef.current && containerRef.current.clientWidth > 0) {
         const dims = fitAddon.proposeDimensions();
-        if (dims) {
+        if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows)) {
           ws.invoke("terminal_resize", {
             id: termIdRef.current,
             cols: dims.cols,
@@ -135,7 +137,7 @@ export default function TerminalPane({ workspaceRoot }: TerminalPaneProps) {
   return (
     <div
       ref={containerRef}
-      className="flex-1 overflow-hidden bg-[var(--color-background-deeper)]"
+      className="absolute inset-0 overflow-hidden bg-[var(--color-background-deeper)]"
     />
   );
 }

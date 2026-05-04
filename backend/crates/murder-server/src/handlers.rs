@@ -279,6 +279,9 @@ pub fn handle_workspace_open(state: &AppState, params: &Value) -> Result<Value, 
     let path = params["path"].as_str().ok_or("missing 'path'")?;
     state.set_workspace(path);
 
+    // Record in recently opened workspaces (SQLite)
+    let _ = murder_db::recent::add_recent_workspace(&state.db.lock(), path);
+
     let root = Path::new(path);
     let tree = murder_workspace::FileTree::scan(root);
 
@@ -753,4 +756,24 @@ pub fn handle_get_config_path(_state: &AppState, _params: &Value) -> Result<Valu
     // Ensure the config directory exists
     std::fs::create_dir_all(&config_dir).map_err(|e| format!("failed to create config dir: {e}"))?;
     Ok(json!({ "path": config_file.to_string_lossy().to_string() }))
+}
+
+// ---------------------------------------------------------------------------
+// Session state handlers (backed by SQLite, not JSON config)
+// ---------------------------------------------------------------------------
+
+/// Get recently opened workspaces from the database.
+pub fn handle_get_recent_workspaces(state: &AppState, params: &Value) -> Result<Value, String> {
+    let limit = params["limit"].as_u64().unwrap_or(10) as usize;
+    let workspaces = murder_db::recent::recent_workspaces(&state.db.lock(), limit)
+        .map_err(|e| format!("failed to query recent workspaces: {e}"))?;
+    Ok(json!(workspaces))
+}
+
+/// Add a workspace to the recently opened list.
+pub fn handle_add_recent_workspace(state: &AppState, params: &Value) -> Result<Value, String> {
+    let path = params["path"].as_str().ok_or("missing 'path'")?;
+    murder_db::recent::add_recent_workspace(&state.db.lock(), path)
+        .map_err(|e| format!("failed to add recent workspace: {e}"))?;
+    Ok(json!({ "success": true }))
 }

@@ -54,8 +54,6 @@ export interface IdeSettings {
   terminal: TerminalSettings;
   explorer: ExplorerSettings;
   folderPicker: FolderPickerSettings;
-  /** Recently opened directories (most recent first) */
-  recentlyOpened: string[];
 }
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
@@ -101,7 +99,6 @@ const DEFAULT_SETTINGS: IdeSettings = {
   folderPicker: {
     showHiddenFiles: false,
   },
-  recentlyOpened: [],
 };
 
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -153,7 +150,6 @@ function getDefaultJson(): string {
     terminal,
     explorer,
     folderPicker,
-    recentlyOpened,
   } = current;
   const toSave = {
     editor,
@@ -162,7 +158,6 @@ function getDefaultJson(): string {
     terminal,
     explorer,
     folderPicker,
-    recentlyOpened,
   };
   return `// Murder IDE Settings — global config (~/.crow/murder.json)\n// JSONC format — comments and trailing commas supported\n\n${JSON.stringify(toSave, null, 2)}\n`;
 }
@@ -234,20 +229,33 @@ export async function updateSetting(
   for (const fn of listeners) fn();
 }
 
-/** Add a directory to recently opened (front of list, dedupe, max 10) */
+/** Add a directory to recently opened — delegates to backend SQLite */
 export async function addRecentlyOpened(dir: string): Promise<void> {
-  const list = current.recentlyOpened.filter((d) => d !== dir);
-  list.unshift(dir);
-  current.recentlyOpened = list.slice(0, 10);
-  await _writeSettings();
-  for (const fn of listeners) fn();
+  try {
+    await ws.invoke("add_recent_workspace", { path: dir });
+  } catch (e) {
+    console.error("Failed to add recent workspace:", e);
+  }
 }
 
-/** Clear recently opened list */
+/** Get recently opened workspaces from backend SQLite */
+export async function getRecentWorkspaces(limit = 10): Promise<string[]> {
+  try {
+    const entries = await ws.invoke<Array<{ path: string }>>(
+      "get_recent_workspaces",
+      { limit },
+    );
+    return entries.map((e) => e.path);
+  } catch (e) {
+    console.error("Failed to get recent workspaces:", e);
+    return [];
+  }
+}
+
+/** Clear recently opened list — delegates to backend SQLite */
 export async function clearRecentlyOpened(): Promise<void> {
-  current.recentlyOpened = [];
-  await _writeSettings();
-  for (const fn of listeners) fn();
+  // Not yet wired — would need a backend handler
+  console.warn("clearRecentlyOpened not yet implemented for SQLite backend");
 }
 
 export function subscribe(fn: () => void): () => void {

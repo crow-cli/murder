@@ -36,11 +36,11 @@ impl Database {
         Ok(db)
     }
 
-    /// Opens the database at the default path: `~/.sidex/state.db`.
+    /// Opens the database at the default path: `~/.crow/state.db`.
     pub fn open_default() -> Result<Self> {
         let dir = dirs::home_dir()
             .context("could not determine home directory")?
-            .join(".sidex");
+            .join(".crow");
         Self::open(&dir.join("state.db"))
     }
 

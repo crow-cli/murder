@@ -5,6 +5,8 @@ import * as settings from "../lib/settings";
 interface EditorPaneProps {
   path: string;
   language: string;
+  /** When true, forces a Monaco layout() call to repaint the canvas after being hidden. */
+  isActive?: boolean;
   readOnly?: boolean;
   height?: number;
   wordWrap?: boolean;
@@ -32,7 +34,7 @@ const MONACO_THEME_COLORS = {
 const modelRegistry = new Map<string, monaco.editor.ITextModel>();
 
 const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
-  function EditorPane({ path, language, readOnly, height, wordWrap, onCursorChange, onDirtyChange }, ref) {
+  function EditorPane({ path, language, isActive, readOnly, height, wordWrap, onCursorChange, onDirtyChange }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
     const onSaveCallbacks = useRef<(() => void)[]>([]);
@@ -48,6 +50,16 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
       wordWrapRef.current = wordWrap;
       editorRef.current?.updateOptions({ wordWrap: wordWrap ? "on" : "off" });
     }, [wordWrap]);
+
+    // ── Visibility Repaint Hook (triggers layout() when tile becomes active) ─
+    useEffect(() => {
+      if (isActive && editorRef.current) {
+        const id = setTimeout(() => {
+          editorRef.current?.layout();
+        }, 50);
+        return () => clearTimeout(id);
+      }
+    }, [isActive]);
     useEffect(() => {
       onCursorChangeRef.current = onCursorChange;
     }, [onCursorChange]);
@@ -170,11 +182,8 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
       return () => {
         container?.removeEventListener('keydown', handleEditorKeydown, true);
         editor.dispose();
-        // Clean up all models on unmount (full component destruction)
-        for (const [, model] of modelRegistry) {
-          model.dispose();
-        }
-        modelRegistry.clear();
+        // DO NOT dispose models here — they live in the registry for multi-tab/multi-session use.
+        // Models are explicitly disposed via disposeModel() when a tab is closed.
       };
     }, []);
 
@@ -212,6 +221,13 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
       editor.setModel(model);
       editor.focus();
 
+      console.log("[EditorPane] setModel for", path, "content length:", model.getValueLength(), "isActive:", isActive);
+
+      // Force layout after setting model
+      requestAnimationFrame(() => {
+        editor.layout();
+      });
+
       // Listen for content changes to track dirty state
       const disposable = model.onDidChangeContent(() => {
         onDirtyChangeRef.current?.(true);
@@ -225,6 +241,12 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
 );
 
 export default EditorPane;
+
+/** Utility: get content from model registry by path */
+export function getModelContent(path: string): string | null {
+  const model = modelRegistry.get(path);
+  return model ? model.getValue() : null;
+}
 
 /** Utility: set content for a path's model (called by App.tsx after loading a file) */
 export function setModelContent(

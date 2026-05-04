@@ -17,4 +17,7 @@ export default defineConfig({
     outDir: "../target/frontend",
     emptyOutDir: true,
   },
+  worker: {
+    format: "es",
+  },
 });

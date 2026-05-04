@@ -132,9 +132,7 @@ textarea {
     background: var(--color-background-dark) !important;
 }
 .murder-mosaic-theme .mosaic-window-toolbar {
-    background: var(--color-background) !important;
-    border-bottom: 1px solid var(--color-border) !important;
-    color: var(--color-foreground) !important;
+    display: none !important;
 }
 .murder-mosaic-theme .mosaic-window-body {
     background: var(--color-background-dark) !important;
