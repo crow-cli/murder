@@ -7,6 +7,8 @@ import "xterm/css/xterm.css";
 
 interface TerminalPaneProps {
   workspaceRoot: string;
+  /** If true, skip cleanup on unmount (for tile minimize/restore). */
+  keepAlive?: boolean;
 }
 
 // Terminal color theme (xterm.js only — not React styles)
@@ -34,7 +36,7 @@ const TERMINAL_THEME = {
   brightWhite: "#ffffff",
 };
 
-export default function TerminalPane({ workspaceRoot }: TerminalPaneProps) {
+export default function TerminalPane({ workspaceRoot, keepAlive }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -44,13 +46,14 @@ export default function TerminalPane({ workspaceRoot }: TerminalPaneProps) {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (keepAlive) return; // Minimized — don't kill PTY, don't dispose
       if (termIdRef.current !== null) {
         ws.invoke("terminal_kill", { id: termIdRef.current }).catch(() => {});
         termIdRef.current = null;
       }
       terminalRef.current?.dispose();
     };
-  }, []);
+  }, [keepAlive]);
 
   // Spawn terminal on mount
   useEffect(() => {

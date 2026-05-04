@@ -13,7 +13,7 @@ import RpcLogPanel from "./components/RpcLogPanel";
 import SettingsPane from "./components/SettingsPane";
 import { FolderPicker } from "./components/FolderPicker";
 import BottomBar, { type ActivityId } from "./components/BottomBar";
-import MosaicLayout from "./components/MosaicLayout";
+import MosaicLayout, { type TileType, getMinimizedTileCount } from "./components/MosaicLayout";
 import { MenuBar, type MenuGroup } from "./components/MenuBar";
 import * as settings from "./lib/settings";
 import { ws } from "./lib/ws-client";
@@ -946,6 +946,16 @@ export default function App() {
         lineEnding="LF"
         wordWrap={wordWrap}
         workspaceName={workspaceRoot?.split("/").pop() || ""}
+        onToggleEditors={() => {
+          (window as any).__toggleEditors?.();
+        }}
+        onToggleTerminals={() => {
+          (window as any).__toggleTerminals?.();
+        }}
+        editorsMinimized={getMinimizedTileCount("editor") > 0}
+        terminalsMinimized={getMinimizedTileCount("terminal") > 0}
+        editorTileCount={getMinimizedTileCount("editor")}
+        terminalTileCount={getMinimizedTileCount("terminal")}
       />
 
       {showFolderPicker && (

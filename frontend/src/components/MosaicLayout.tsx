@@ -53,6 +53,9 @@ const tileRegistry = new Map<
   }
 >();
 
+/** Set of minimized (hidden) tile IDs */
+const minimizedTiles = new Set<ViewId>();
+
 // ── Utility: generate unique tile ID ──────────────────────────────────────────
 let tileCounter = 0;
 function uid(prefix: string): string {
@@ -98,6 +101,9 @@ export function registerTile(id: ViewId, type: TileType) {
 }
 
 export function unregisterTile(id: ViewId) {
+  // If the tile is minimized, don't actually unregister — just return.
+  // The tile will be restored from the registry when toggled back.
+  if (minimizedTiles.has(id)) return;
   tileRegistry.delete(id);
 }
 
@@ -107,6 +113,24 @@ export function getEditorState(id: ViewId): EditorTileState | null {
 
 export function getTerminalState(id: ViewId): TerminalTileState | null {
   return tileRegistry.get(id)?.terminalState ?? null;
+}
+
+// ── Expose tile count helpers ─────────────────────────────────────────────────
+export function getVisibleTileCount(type: TileType): number {
+  let count = 0;
+  for (const [id, entry] of tileRegistry) {
+    if (entry.meta.type === type && !minimizedTiles.has(id)) count++;
+  }
+  return count;
+}
+
+export function getMinimizedTileCount(type: TileType): number {
+  let count = 0;
+  for (const id of minimizedTiles) {
+    const entry = tileRegistry.get(id);
+    if (entry?.meta.type === type) count++;
+  }
+  return count;
 }
 
 // ── EditorTile: tabbed file container ─────────────────────────────────────────
@@ -124,8 +148,15 @@ function EditorTile({
   onFileClick,
   onRemove,
 }: EditorTileProps) {
-  const [files, setFiles] = useState<{ path: string; language: string }[]>([]);
-  const [activeIndex, setActiveIndex] = useState(-1);
+  // Restore state from registry if available (from previous mount before minimize)
+  const registryEntry = tileRegistry.get(tileId);
+  const savedState = registryEntry?.editorState;
+  const [files, setFiles] = useState<{ path: string; language: string }[]>(
+    savedState?.files ?? []
+  );
+  const [activeIndex, setActiveIndex] = useState(
+    savedState?.activeIndex ?? -1
+  );
   const openFileRef = useRef<((path: string) => Promise<void>) | null>(null);
   const onRemoveRef = useRef(onRemove);
   useEffect(() => {
@@ -285,8 +316,15 @@ interface TerminalTileProps {
 }
 
 function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
-  const [terminals, setTerminals] = useState<string[]>([]);
-  const [activeIndex, setActiveIndex] = useState(-1);
+  // Restore state from registry if available (from previous mount before minimize)
+  const registryEntry = tileRegistry.get(tileId);
+  const savedState = registryEntry?.terminalState;
+  const [terminals, setTerminals] = useState<string[]>(
+    savedState?.terminals ?? []
+  );
+  const [activeIndex, setActiveIndex] = useState(
+    savedState?.activeIndex ?? -1
+  );
   const termCounterRef = useRef(0);
   const onRemoveRef = useRef(onRemove);
   useEffect(() => {
@@ -376,7 +414,6 @@ function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
                 <span className="overflow-hidden text-ellipsis whitespace-nowrap max-w-[120px]">
                   Terminal {idx + 1}
                 </span>
-                {/* Always show × — clicking it closes the tab, or the tile if it's the last one */}
                 <button
                   className="ml-auto h-5 w-5 p-0 rounded-sm text-[var(--color-active)] hover:text-[var(--color-destructive)] hover:bg-[var(--color-border)] flex items-center justify-center"
                   onClick={(e) => {
@@ -420,6 +457,8 @@ interface MosaicLayoutProps {
 
 export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
   const [layout, setLayout] = useState<MosaicNode<ViewId> | null>(null);
+  // Track which tiles are minimized (unmounted from tree)
+  const [minimizedState, setMinimizedState] = useState<Set<ViewId>>(new Set());
 
   useEffect(() => {
     setGetLayout(() => layout);
@@ -467,6 +506,111 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     return () => window.removeEventListener("remove-tile", handler);
   }, [removeTile]);
 
+  // ── Minimize / Restore ────────────────────────────────────────────────────
+  /** Minimize all tiles of a given type — removes them from the mosaic tree. */
+  const minimizeTiles = useCallback((type: TileType) => {
+    const toMinimize = new Set<ViewId>();
+    for (const [id, entry] of tileRegistry) {
+      if (entry.meta.type === type && !minimizedTiles.has(id)) {
+        toMinimize.add(id);
+        minimizedTiles.add(id);
+      }
+    }
+    if (toMinimize.size === 0) return;
+
+      setLayout((prev) => {
+        let result = prev;
+        for (const id of toMinimize) {
+          result = removeFromTree(result, id);
+        }
+        return result;
+      });
+      setMinimizedState((prev) => {
+        const next = new Set(prev);
+        for (const id of toMinimize) next.add(id);
+        return next;
+      });
+    },
+    [removeFromTree],
+  );
+
+  /** Restore minimized tiles of a given type — re-add them to the mosaic tree. */
+  const restoreTiles = useCallback((type: TileType) => {
+    const toRestore: ViewId[] = [];
+    for (const id of minimizedTiles) {
+      const entry = tileRegistry.get(id);
+      if (entry?.meta.type === type) {
+        toRestore.push(id);
+      }
+    }
+    if (toRestore.length === 0) return;
+
+    for (const id of toRestore) {
+      minimizedTiles.delete(id);
+    }
+    setMinimizedState((prev) => {
+      const next = new Set(prev);
+      for (const id of toRestore) next.delete(id);
+      return next;
+    });
+
+    setLayout((prev) => {
+      let result = prev;
+      for (const id of toRestore) {
+        if (!result) {
+          result = id;
+        } else {
+          result = addToLastLeaf(result, id);
+        }
+      }
+      return result;
+    });
+  }, []);
+
+  /** Toggle minimize/restore for a tile type. */
+  const toggleTiles = useCallback(
+    (type: TileType) => {
+      const anyMinimized = [...tileRegistry].some(
+        ([id, entry]) => entry.meta.type === type && minimizedTiles.has(id),
+      );
+      if (anyMinimized) {
+        restoreTiles(type);
+      } else {
+        minimizeTiles(type);
+      }
+    },
+    [minimizeTiles, restoreTiles],
+  );
+
+  // Expose toggle functions globally
+  useEffect(() => {
+    const handlers = {
+      "toggle-minimize-editors": () => toggleTiles("editor"),
+      "toggle-minimize-terminals": () => toggleTiles("terminal"),
+    };
+    for (const [event, handler] of Object.entries(handlers)) {
+      window.addEventListener(event, handler);
+    }
+    return () => {
+      for (const event of Object.keys(handlers)) {
+        window.removeEventListener(
+          event,
+          handlers[event as keyof typeof handlers],
+        );
+      }
+    };
+  }, [toggleTiles]);
+
+  // Expose toggle functions via custom accessors
+  useEffect(() => {
+    (window as any).__toggleEditors = () => toggleTiles("editor");
+    (window as any).__toggleTerminals = () => toggleTiles("terminal");
+    return () => {
+      delete (window as any).__toggleEditors;
+      delete (window as any).__toggleTerminals;
+    };
+  }, [toggleTiles]);
+
   // ── Global handlers ───────────────────────────────────────────────────────
   const openFileInTile = useCallback(async (path: string) => {
     const language = getLanguage(path);
@@ -475,9 +619,9 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
       .catch(() => ({ content: "" }));
     setModelContent(path, content.content, language);
 
-    // Find first existing editor tile
+    // Find first existing non-minimized editor tile
     for (const [id, entry] of tileRegistry) {
-      if (entry.meta.type === "editor") {
+      if (entry.meta.type === "editor" && !minimizedTiles.has(id)) {
         const state = entry.editorState;
         if (state && state.files.some((f) => f.path === path)) {
           state.activeIndex = state.files.findIndex((f) => f.path === path);
@@ -489,7 +633,7 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
         return;
       }
     }
-    // No editor tile — create one
+    // No visible editor tile — create one
     const id = uid("editor");
     registerTile(id, "editor");
     const entry = tileRegistry.get(id);
@@ -502,7 +646,7 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
 
   const openTerminalInTile = useCallback(() => {
     for (const [id, entry] of tileRegistry) {
-      if (entry.meta.type === "terminal") {
+      if (entry.meta.type === "terminal" && !minimizedTiles.has(id)) {
         window.dispatchEvent(
           new CustomEvent("tile-add-terminal", { detail: { tileId: id } }),
         );
@@ -550,7 +694,7 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
   // ── Toolbar controls ──────────────────────────────────────────────────────
   const makeToolbar = useCallback(
     (viewId: ViewId) => (
-      <div className="flex items-center">
+      <div className="flex items-center gap-1 px-1">
         <RemoveButton />
       </div>
     ),

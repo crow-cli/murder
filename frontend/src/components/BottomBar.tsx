@@ -1,4 +1,4 @@
-/** Bottom bar — activity icons + status info (Zed-style) */
+/** Bottom bar — activity icons + status info + minimize toggles (Zed-style) */
 import {
   IconChat,
   IconExplorer,
@@ -6,6 +6,8 @@ import {
   IconGit,
   IconExtensions,
   IconRpc,
+  IconTerminal,
+  IconEditor,
 } from "../lib/icons";
 
 export type ActivityId =
@@ -31,6 +33,18 @@ interface BottomBarProps {
   lineEnding: string;
   wordWrap: boolean;
   workspaceName: string;
+  /** Toggle minimization of all editor tiles */
+  onToggleEditors: () => void;
+  /** Toggle minimization of all terminal tiles */
+  onToggleTerminals: () => void;
+  /** Whether editor tiles are currently minimized */
+  editorsMinimized: boolean;
+  /** Whether terminal tiles are currently minimized */
+  terminalsMinimized: boolean;
+  /** Count of visible editor tiles */
+  editorTileCount: number;
+  /** Count of visible terminal tiles */
+  terminalTileCount: number;
 }
 
 interface ActivityDef {
@@ -62,14 +76,25 @@ export default function BottomBar({
   lineEnding,
   wordWrap,
   workspaceName,
+  onToggleEditors,
+  onToggleTerminals,
+  editorsMinimized,
+  terminalsMinimized,
+  editorTileCount,
+  terminalTileCount,
 }: BottomBarProps) {
   const isActive = (id: ActivityId) => active === id;
-  const iconColor = (id: ActivityId) => isActive(id) ? "var(--color-primary)" : "var(--color-foreground)";
+  const iconColor = (id: ActivityId) =>
+    isActive(id) ? "var(--color-primary)" : "var(--color-foreground)";
 
   return (
     <div
       className="h-[28px] flex items-center px-2 text-[12px] shrink-0 font-medium flex-nowrap select-none"
-      style={{ backgroundColor: "var(--color-background-dark)", color: "var(--color-foreground)", borderTop: "1px solid var(--color-border)" }}
+      style={{
+        backgroundColor: "var(--color-background-dark)",
+        color: "var(--color-foreground)",
+        borderTop: "1px solid var(--color-border)",
+      }}
     >
       {/* Left: activity icons */}
       <div className="flex items-center gap-1">
@@ -97,15 +122,18 @@ export default function BottomBar({
       {/* Left-center: workspace + status */}
       <div className="flex items-center gap-2 ml-3">
         <span className="px-1.5 h-[28px] flex items-center cursor-default text-[12px] whitespace-nowrap">
-          {connected ? "✓" : "○"} {saving ? "Saving…" : workspaceName || "No Folder"}
+          {connected ? "✓" : "○"}{" "}
+          {saving ? "Saving…" : workspaceName || "No Folder"}
         </span>
         {dirty && (
-          <span className="text-[var(--color-primary)] text-sm leading-none">●</span>
+          <span className="text-[var(--color-primary)] text-sm leading-none">
+            ●
+          </span>
         )}
       </div>
 
-      {/* Right: status info + explorer icon */}
-      <div className="flex items-center gap-3 ml-auto mr-1">
+      {/* Right: status info + minimize toggles + explorer */}
+      <div className="flex items-center gap-2 ml-auto mr-1">
         <span className="px-1.5 h-[28px] flex items-center cursor-default text-[11px] whitespace-nowrap opacity-80">
           Ln {line}, Col {col}
         </span>
@@ -121,11 +149,60 @@ export default function BottomBar({
           {language}
         </span>
 
+        {/* Divider */}
+        <div className="w-[1px] h-[16px] bg-[var(--color-border)] mx-1" />
+
+        {/* Editor toggle — minimize/restore all editor tiles */}
+        <button
+          title={
+            editorsMinimized
+              ? `Restore editors (${editorTileCount} hidden)`
+              : "Minimize all editors"
+          }
+          onClick={onToggleEditors}
+          className="w-[28px] h-[28px] flex items-center justify-center bg-transparent border-none cursor-pointer rounded-sm hover:bg-[var(--color-hover)] transition-colors relative"
+          style={{
+            color: editorsMinimized
+              ? "var(--color-primary)"
+              : iconColor("explorer"),
+          }}
+        >
+          <IconEditor size={16} />
+          {editorTileCount > 0 && (
+            <span className="absolute bottom-0 right-0 bg-[var(--color-muted)] text-[var(--color-foreground-dim)] rounded-full w-[14px] h-[14px] text-[8px] font-bold flex items-center justify-center">
+              {editorTileCount}
+            </span>
+          )}
+        </button>
+
+        {/* Terminal toggle — minimize/restore all terminal tiles */}
+        <button
+          title={
+            terminalsMinimized
+              ? `Restore terminals (${terminalTileCount} hidden)`
+              : "Minimize all terminals"
+          }
+          onClick={onToggleTerminals}
+          className="w-[28px] h-[28px] flex items-center justify-center bg-transparent border-none cursor-pointer rounded-sm hover:bg-[var(--color-hover)] transition-colors relative"
+          style={{
+            color: terminalsMinimized
+              ? "var(--color-primary)"
+              : iconColor("explorer"),
+          }}
+        >
+          <IconTerminal size={16} />
+          {terminalTileCount > 0 && (
+            <span className="absolute bottom-0 right-0 bg-[var(--color-muted)] text-[var(--color-foreground-dim)] rounded-full w-[14px] h-[14px] text-[8px] font-bold flex items-center justify-center">
+              {terminalTileCount}
+            </span>
+          )}
+        </button>
+
         {/* Explorer icon — far right, opens right sidebar */}
         <button
           title="Explorer"
           onClick={() => onActivate("explorer")}
-          className="w-[28px] h-[28px] flex items-center justify-center bg-transparent border-none cursor-pointer rounded-sm hover:bg-[var(--color-hover)] transition-colors ml-2"
+          className="w-[28px] h-[28px] flex items-center justify-center bg-transparent border-none cursor-pointer rounded-sm hover:bg-[var(--color-hover)] transition-colors ml-1"
           style={{ color: iconColor("explorer") }}
         >
           <IconExplorer size={16} />
