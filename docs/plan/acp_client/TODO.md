@@ -1,57 +1,6 @@
 # ACP Client TODO — Agent Chat Integration
 
-## Current State
-- Multi-session support (create, close, switch sessions)
-- Chat tabs in editor area (minimize/expand)
-- Message rendering (Streamdown with code, mermaid, math)
-- Tool call accordions (read, write, edit, terminal, web fetch, web search)
-- File view integration (Monaco read-only, write, diff editors)
-- Inline terminal (xterm.js, PTY-backed)
-- Plan/task list display
-- Permission request bar
-- Connection status indicator
-
-## NOT DOING (explicitly excluded)
-
-These features are NOT in scope. Do NOT implement:
-
-### Permission System
-- Accept/Reject/Always-Accept buttons
-- Permission request dialogs
-- Permission policy configuration
-- Tool allowlists/denylists
-
-### Extension/Plugin Support
-- Agent plugin system
-- MCP server discovery UI
-- Agent marketplace
-- Agent configuration editor (use JSONC config file)
-
-### Heavy Chat Features
-- Voice input/output
-- Image generation in chat
-- Video playback
-- File attachments / drag-and-drop into chat
-- @-mentions (file/symbol references)
-- Context awareness UI
-- Chat history persistence across sessions
-- Chat export (markdown, PDF)
-- Chat search/filter
-- Conversation branching
-- Multi-agent collaboration view
-- Agent self-modification
-- Agent memory/knowledge base UI
-
-### Enterprise
-- Chat audit logging
-- Chat encryption
-- Multi-user chat
-- Chat sharing/collaboration
-- Rate limiting UI
-- Usage/cost tracking
-- Agent switching without restart (backend concern)
-
-## TODO (if/when we come back to chat)
+## TODO 
 
 ### Visual Polish
 - [ ] Chat panel border styling matches VSCode panel borders
@@ -62,8 +11,9 @@ These features are NOT in scope. Do NOT implement:
 - [ ] Session name editing
 
 ### Input
+- [ ] 
 - [ ] Draft persistence (typing + click away ≠ lost text)
-- [ ] Syntax-highlighted input area
+- [ ] tiptap syntax-highlighted input area
 - [ ] @-mentions for file/symbol references
 - [ ] Drag-and-drop into chat
 
@@ -76,3 +26,18 @@ These features are NOT in scope. Do NOT implement:
 ### Testing
 - [ ] Playwright E2E tests for chat flow
 - [ ] Agent evaluation framework
+
+
+
+
+### Bugs/QA analysis
+- any resizing of chat window creates a new session. 
+- session should only be created when user goes through session creation menus or UI or whatever
+- session must be maintained when chat is moved/refreshed/minimized. those things change the view not the actual underlying model data
+- no split capability for agent right now
+- when an agent pane spins up it should not automatically initialize a client, at least not for now. we need a start agent dialog.
+- we need a dialog/setting where we choose which agent we want to connect with
+- we need agent servers in our settings and as a fundamental part of configuration for murder-acp
+- we need to add the user's query to the chat
+- work on focus. if user scrolls inside the chat, let them and stream beneath
+- if user has clicked into prompt window then keep focus glued to bottom and newly streaming text

@@ -10,7 +10,6 @@ repository.workspace = true
 [dependencies]
 murder-text = { workspace = true }
 murder-workspace = { workspace = true }
-murder-git = { workspace = true }
 murder-terminal = { workspace = true }
 murder-acp = { workspace = true }
 murder-db = { workspace = true }

@@ -1110,7 +1110,6 @@ dependencies = [
  "mime_guess",
  "murder-acp",
  "murder-db",
- "murder-git",
  "murder-terminal",
  "murder-text",
  "murder-workspace",
