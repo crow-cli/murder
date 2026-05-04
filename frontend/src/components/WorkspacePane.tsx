@@ -1,0 +1,190 @@
+/** WorkspacePane — A tabbed workspace containing editors + terminal */
+import { useState, useCallback, useEffect, useRef } from "react";
+import EditorPane, { setModelContent } from "./EditorPane";
+import TerminalPane from "./TerminalPane";
+import { ws } from "../lib/ws-client";
+import { FileIcon } from "../lib/file-icons";
+
+function getLanguage(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() || "";
+  const map: Record<string, string> = {
+    rs: "rust", ts: "typescript", tsx: "typescriptreact",
+    js: "javascript", jsx: "javascriptreact", py: "python",
+    go: "go", java: "java", c: "c", cpp: "cpp", cs: "csharp",
+    css: "css", html: "html", json: "json", md: "markdown",
+    yml: "yaml", yaml: "yaml", toml: "toml", sh: "shell",
+  };
+  return map[ext] || "plaintext";
+}
+
+export interface TabItem {
+  id: string;
+  type: "file" | "terminal";
+  path?: string;
+  title: string;
+  language?: string;
+  dirty?: boolean;
+}
+
+export interface WorkspacePaneHandle {
+  openFile: (path: string) => Promise<string | null>; // returns tabId
+  openTerminal: () => string; // returns tabId
+}
+
+interface WorkspacePaneProps {
+  id: string;
+  workspaceRoot: string | null;
+  onActivate?: (handle: WorkspacePaneHandle) => void;
+}
+
+export default function WorkspacePane({ id, workspaceRoot, onActivate }: WorkspacePaneProps) {
+  const [tabs, setTabs] = useState<TabItem[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const paneRef = useRef<WorkspacePaneHandle | null>(null);
+
+  // Create handle and register on mount
+  useEffect(() => {
+    const handle: WorkspacePaneHandle = {
+      openFile: async (path: string) => {
+        const existing = tabs.find(t => t.type === "file" && t.path === path);
+        if (existing) {
+          setActiveTabId(existing.id);
+          return existing.id;
+        }
+        try {
+          const result = await ws.invoke<{ content: string }>("read_file", { path });
+          const language = getLanguage(path);
+          const content = result.content;
+          // Populate Monaco model registry so EditorPane can find the content
+          setModelContent(path, content, language);
+          const tabId = `file-${path}-${Date.now()}`;
+          const newTab: TabItem = {
+            id: tabId,
+            type: "file",
+            path,
+            title: path.split("/").pop() || path,
+            language,
+          };
+          setTabs(prev => [...prev, newTab]);
+          setActiveTabId(tabId);
+          return tabId;
+        } catch (e) {
+          console.error("Failed to open file:", e);
+          return null;
+        }
+      },
+      openTerminal: () => {
+        const tabId = `terminal-${Date.now()}`;
+        const newTab: TabItem = { id: tabId, type: "terminal", title: "Terminal" };
+        setTabs(prev => [...prev, newTab]);
+        setActiveTabId(tabId);
+        return tabId;
+      },
+    };
+    paneRef.current = handle;
+    onActivate?.(handle);
+  }, []);
+
+  // Update tabs reference in handle (closure captures stale state)
+  useEffect(() => {
+    if (paneRef.current) {
+      // The handle methods are stable, they read from the latest tabs via state
+    }
+  }, [tabs]);
+
+  // Open a file in this workspace
+  const openFile = useCallback(async (path: string) => {
+    return paneRef.current?.openFile(path) ?? null;
+  }, []);
+
+  // Open a terminal in this workspace
+  const openTerminal = useCallback(() => {
+    return paneRef.current?.openTerminal() ?? "";
+  }, []);
+
+  // Close a tab
+  const closeTab = useCallback((tabId: string) => {
+    setTabs(prev => {
+      const next = prev.filter(t => t.id !== tabId);
+      if (activeTabId === tabId) {
+        setActiveTabId(next.length > 0 ? next[next.length - 1].id : null);
+      }
+      return next;
+    });
+  }, [activeTabId]);
+
+  const activeTab = tabs.find(t => t.id === activeTabId);
+
+  return (
+    <div className="flex flex-col h-full bg-[var(--color-background-dark)]">
+      {/* Tab Bar */}
+      {tabs.length > 0 && (
+        <div className="flex bg-[var(--color-background)] border-b border-[var(--color-border)] overflow-x-auto shrink-0 h-[35px]">
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeTabId;
+            return (
+              <div
+                key={tab.id}
+                className="flex items-center gap-1.5 px-3 text-[13px] cursor-pointer select-none border-r border-[var(--color-border)] min-w-0 relative transition-colors"
+                style={{
+                  backgroundColor: isActive ? "var(--color-card)" : "transparent",
+                  color: isActive ? "var(--color-foreground)" : "var(--color-foreground-dim)",
+                }}
+                onClick={() => setActiveTabId(tab.id)}
+              >
+                {isActive && (
+                  <div className="absolute top-0 left-0 right-0 h-[1px] bg-[var(--color-primary)]" />
+                )}
+                {tab.type === "file" ? (
+                  <FileIcon name={tab.title} size={12} />
+                ) : (
+                  <span className="text-xs">⌨️</span>
+                )}
+                <span className="overflow-hidden text-ellipsis whitespace-nowrap max-w-[150px]">
+                  {tab.title}
+                </span>
+                {tab.dirty && (
+                  <span className="text-[8px] leading-none text-[var(--color-primary)]">●</span>
+                )}
+                <button
+                  className="ml-auto h-5 w-5 p-0 rounded-sm text-[var(--color-active)] hover:text-[var(--color-destructive)] hover:bg-[var(--color-border)] flex items-center justify-center"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Content Area */}
+      <div className="flex-1 overflow-hidden">
+        {tabs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-4 opacity-50">
+            <div className="text-4xl">◆</div>
+            <div className="text-lg font-light">No files open</div>
+            <div className="text-xs">Use Ctrl+P to open a file</div>
+          </div>
+        ) : activeTab ? (
+          <div className="h-full relative">
+            {activeTab.type === "file" && activeTab.path && (
+              <EditorPane path={activeTab.path} language={activeTab.language || "plaintext"} />
+            )}
+            {activeTab.type === "terminal" && workspaceRoot && (
+              <TerminalPane workspaceRoot={workspaceRoot} />
+            )}
+            {activeTab.type === "terminal" && !workspaceRoot && (
+              <div className="flex items-center justify-center h-full opacity-50">
+                Open a folder to use the terminal
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}

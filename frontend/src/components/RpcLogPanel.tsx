@@ -5,16 +5,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import * as acpStore from "../lib/acp-store";
 
-const COLORS = {
-  bg: "#1a1230",
-  bgDark: "#14101f",
-  bgLighter: "#251d4a",
-  border: "#2d2350",
-  text: "#d4c4ff",
-  textMuted: "#8b7bb5",
-  accent: "#4ade80",
-};
-
 export default function RpcLogPanel() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [filter, setFilter] = useState("");
@@ -88,40 +78,44 @@ export default function RpcLogPanel() {
   }, []);
 
   return (
-    <div style={styles.root}>
-      <div style={styles.header}>
-        <span style={styles.title}>RPC Log ({notifications.length})</span>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <button onClick={expandAll} style={styles.smBtn}>
+    <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-background)] text-[var(--color-foreground)] font-sans text-sm overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-background-dark)] flex-shrink-0 gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)] whitespace-nowrap">
+          ACP Log ({notifications.length})
+        </span>
+        <div className="flex gap-1 items-center">
+          <button onClick={expandAll} className="px-2 py-0.5 text-[10px] rounded border border-[var(--color-border)] bg-transparent text-[var(--color-muted-foreground)] cursor-pointer whitespace-nowrap hover:bg-[var(--color-border)] transition-colors">
             Expand All
           </button>
-          <button onClick={collapseAll} style={styles.smBtn}>
+          <button onClick={collapseAll} className="px-2 py-0.5 text-[10px] rounded border border-[var(--color-border)] bg-transparent text-[var(--color-muted-foreground)] cursor-pointer whitespace-nowrap hover:bg-[var(--color-border)] transition-colors">
             Collapse
           </button>
-          <button onClick={copyAll} style={styles.smBtn}>
+          <button onClick={copyAll} className="px-2 py-0.5 text-[10px] rounded border border-[var(--color-border)] bg-transparent text-[var(--color-muted-foreground)] cursor-pointer whitespace-nowrap hover:bg-[var(--color-border)] transition-colors">
             Copy All
           </button>
-          <button onClick={clearLog} style={{ ...styles.smBtn, color: "#f87171" }}>
+          <button onClick={clearLog} className="px-2 py-0.5 text-[10px] rounded border border-[var(--color-border)] bg-transparent text-[var(--color-red)] cursor-pointer whitespace-nowrap hover:bg-[var(--color-border)] transition-colors">
             Clear
           </button>
         </div>
       </div>
 
-      <div style={styles.filterBar}>
+      <div className="flex items-center gap-2 px-3 py-1 border-b border-[var(--color-border)] flex-shrink-0">
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter by type, content, or method…"
-          style={styles.filterInput}
+          className="flex-1 px-2 py-1 text-xs bg-[var(--color-active)] border border-[var(--color-border)] rounded text-[var(--color-foreground)] outline-none font-mono focus:border-[var(--color-primary)] transition-colors"
         />
-        <span style={styles.filterCount}>
+        <span className="text-[10px] text-[var(--color-muted-foreground)] whitespace-nowrap">
           {filter ? `${filtered.length} of ${notifications.length}` : `${notifications.length} entries`}
         </span>
       </div>
 
-      <div ref={listRef} style={styles.list}>
+      <div ref={listRef} className="flex-1 overflow-y-auto font-mono">
         {filtered.length === 0 && (
-          <div style={styles.empty}>No notifications{filter ? " matching filter" : ""}</div>
+          <div className="p-6 text-center text-[var(--color-muted-foreground)] text-xs">
+            No notifications{filter ? " matching filter" : ""}
+          </div>
         )}
         {filtered.map((n: any) => {
           const isExpanded = expanded.has(n.id);
@@ -130,27 +124,24 @@ export default function RpcLogPanel() {
           const ts = new Date(parseInt(n.id.split("-")[0])).toLocaleTimeString();
 
           return (
-            <div key={n.id} style={styles.entry}>
+            <div key={n.id} className="border-b border-[var(--color-border)]">
               <div
                 onClick={() => toggle(n.id)}
-                style={{
-                  ...styles.entryHeader,
-                  background: isExpanded ? COLORS.bgLighter : "transparent",
-                }}
+                className={`flex items-center gap-1.5 px-2 py-0.5 cursor-pointer select-none ${isExpanded ? "bg-[var(--color-active)]" : "bg-transparent"} hover:bg-[var(--color-hover)] transition-colors`}
               >
-                <span style={styles.arrow}>{isExpanded ? "▼" : "▶"}</span>
-                <span style={styles.entryType}>{stype}</span>
-                <span style={styles.entryTime}>{ts}</span>
+                <span className="text-[var(--color-muted-foreground)] text-[9px] w-3 text-center">{isExpanded ? "▼" : "▶"}</span>
+                <span className="text-[var(--color-foreground)] text-[11px] font-mono">{stype}</span>
+                <span className="text-[var(--color-muted-foreground)] text-[10px] ml-auto">{ts}</span>
                 <button
                   onClick={(e) => { e.stopPropagation(); copyEntry(n); }}
-                  style={styles.copyBtn}
+                  className="bg-none border-none cursor-pointer text-[11px] px-1 opacity-60 hover:opacity-100 transition-opacity"
                   title="Copy this entry"
                 >
                   📋
                 </button>
               </div>
               {isExpanded && (
-                <pre style={styles.entryBody}>
+                <pre className="m-0 px-2 py-1.5 pl-7 whitespace-pre-wrap break-all text-[var(--color-muted-foreground)] text-[10px] leading-relaxed bg-black/20">
                   {JSON.stringify(n, null, 2)}
                 </pre>
               )}
@@ -161,125 +152,3 @@ export default function RpcLogPanel() {
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  root: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    minWidth: 0,
-    background: COLORS.bg,
-    color: COLORS.text,
-    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    fontSize: 13,
-    overflow: "hidden",
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "6px 12px",
-    borderBottom: `1px solid ${COLORS.border}`,
-    background: COLORS.bgDark,
-    flexShrink: 0,
-    gap: 8,
-  },
-  title: {
-    fontSize: 11,
-    fontWeight: 600,
-    textTransform: "uppercase" as const,
-    letterSpacing: 0.5,
-    color: COLORS.textMuted,
-    whiteSpace: "nowrap" as const,
-  },
-  smBtn: {
-    padding: "2px 8px",
-    fontSize: 10,
-    borderRadius: 3,
-    border: `1px solid ${COLORS.border}`,
-    background: "transparent",
-    color: COLORS.textMuted,
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-  },
-  filterBar: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "4px 12px",
-    borderBottom: `1px solid ${COLORS.border}`,
-    flexShrink: 0,
-  },
-  filterInput: {
-    flex: 1,
-    padding: "4px 8px",
-    fontSize: 12,
-    background: COLORS.bgLighter,
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 3,
-    color: COLORS.text,
-    outline: "none",
-    fontFamily: "monospace",
-  },
-  filterCount: {
-    fontSize: 10,
-    color: COLORS.textMuted,
-    whiteSpace: "nowrap" as const,
-  },
-  list: {
-    flex: 1,
-    overflowY: "auto" as const,
-    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-  },
-  empty: {
-    padding: 24,
-    textAlign: "center" as const,
-    color: COLORS.textMuted,
-    fontSize: 12,
-  },
-  entry: {
-    borderBottom: `1px solid ${COLORS.border}`,
-  },
-  entryHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    padding: "3px 8px",
-    cursor: "pointer",
-    userSelect: "none" as const,
-  },
-  arrow: {
-    color: COLORS.textMuted,
-    fontSize: 9,
-    width: 12,
-    textAlign: "center" as const,
-  },
-  entryType: {
-    color: COLORS.text,
-    fontSize: 11,
-    fontFamily: "monospace",
-  },
-  entryTime: {
-    color: COLORS.textMuted,
-    fontSize: 10,
-    marginLeft: "auto",
-  },
-  copyBtn: {
-    background: "none",
-    border: "none",
-    cursor: "pointer",
-    fontSize: 11,
-    padding: "0 4px",
-    opacity: 0.6,
-  },
-  entryBody: {
-    margin: 0,
-    padding: "6px 8px 6px 28px",
-    whiteSpace: "pre-wrap" as const,
-    wordBreak: "break-all" as const,
-    color: COLORS.textMuted,
-    fontSize: 10,
-    lineHeight: 1.4,
-    background: "rgba(0,0,0,0.2)",
-  },
-};

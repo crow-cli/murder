@@ -19,19 +19,6 @@ interface MenuBarProps {
   onOpenChange: (menu: string | null) => void;
 }
 
-const COLORS = {
-  bg: "#14101f",
-  hover: "#2d2350",
-  text: "#d4c4ff",
-  textMuted: "#8b7bb5",
-  border: "#2d2350",
-  dropdownBg: "#1a1230",
-  dropdownItemHover: "#2d2350",
-  shortcut: "#5a4d80",
-  separator: "#2d2350",
-  disabled: "#3a2d60",
-};
-
 export function MenuBar({ items, onAction, onOpenChange }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -61,13 +48,17 @@ export function MenuBar({ items, onAction, onOpenChange }: MenuBarProps) {
   };
 
   return (
-    <div ref={menuRef} style={styles.bar}>
+    <div
+      ref={menuRef}
+      className="h-[30px] bg-[var(--color-background-dark)] flex items-center px-2 border-b border-[var(--color-border)] shrink-0 relative z-[100] gap-1"
+    >
       {items.map((menu) => (
-        <div key={menu.label} style={styles.menuItem}>
+        <div key={menu.label} className="relative">
           <button
+            className="px-[10px] py-1 text-[13px] bg-transparent border-none cursor-pointer text-[var(--color-muted-foreground)] font-normal transition-colors"
             style={{
-              ...styles.menuButton,
-              background: openMenu === menu.label ? COLORS.hover : "transparent",
+              borderRadius: 3,
+              background: openMenu === menu.label ? "var(--color-border)" : "transparent",
             }}
             onClick={() => handleMenuClick(menu.label)}
             onMouseEnter={() => {
@@ -80,31 +71,43 @@ export function MenuBar({ items, onAction, onOpenChange }: MenuBarProps) {
             {menu.label}
           </button>
           {openMenu === menu.label && (
-            <div ref={dropdownRef} style={styles.dropdown}>
+            <div
+              ref={dropdownRef}
+              className="absolute top-full left-0 min-w-[200px] bg-[var(--color-background)] border border-[var(--color-border)] py-1 z-[200]"
+              style={{
+                borderRadius: 4,
+                boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+              }}
+            >
               {menu.items.map((item, i) =>
                 item.separator ? (
-                  <div key={i} style={styles.separator} />
+                  <div key={i} className="h-[1px] bg-[var(--color-border)] my-1 mx-2" />
                 ) : (
                   <button
                     key={item.label}
+                    className="flex items-center justify-between w-full text-left box-border text-[13px] text-[var(--color-foreground)] bg-transparent border-none cursor-pointer transition-colors"
                     style={{
-                      ...styles.dropdownItem,
+                      padding: "5px 24px",
                       opacity: item.enabled === false ? 0.4 : 1,
                       cursor: item.enabled === false ? "default" : "pointer",
                     }}
-                    onClick={() => item.enabled !== false && handleAction(item.action)}
+                    onClick={() =>
+                      item.enabled !== false && handleAction(item.action)
+                    }
                     onMouseEnter={(e) => {
                       if (item.enabled !== false) {
-                        e.currentTarget.style.background = COLORS.dropdownItemHover;
+                        e.currentTarget.style.background = "var(--color-border)";
                       }
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = "transparent";
                     }}
                   >
-                    <span style={styles.dropdownItemLabel}>{item.label}</span>
+                    <span className="flex-1">{item.label}</span>
                     {item.shortcut && (
-                      <span style={styles.dropdownShortcut}>{item.shortcut}</span>
+                      <span className="text-[11px] text-[var(--color-foreground-dim)] ml-6 font-mono">
+                        {item.shortcut}
+                      </span>
                     )}
                   </button>
                 ),
@@ -116,70 +119,3 @@ export function MenuBar({ items, onAction, onOpenChange }: MenuBarProps) {
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  bar: {
-    height: 30,
-    background: COLORS.bg,
-    display: "flex",
-    alignItems: "center",
-    padding: "0 4px",
-    borderBottom: `1px solid ${COLORS.border}`,
-    flexShrink: 0,
-    position: "relative" as const,
-    zIndex: 100,
-  },
-  menuItem: {
-    position: "relative" as const,
-  },
-  menuButton: {
-    padding: "4px 10px",
-    fontSize: 13,
-    background: "none",
-    border: "none",
-    color: COLORS.textMuted,
-    cursor: "pointer",
-    borderRadius: 3,
-    fontWeight: 400,
-  },
-  dropdown: {
-    position: "absolute" as const,
-    top: "100%",
-    left: 0,
-    minWidth: 200,
-    background: COLORS.dropdownBg,
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 4,
-    padding: "4px 0",
-    boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
-    zIndex: 200,
-  },
-  dropdownItem: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "4px 24px",
-    fontSize: 13,
-    background: "none",
-    border: "none",
-    color: COLORS.text,
-    width: "100%",
-    textAlign: "left" as const,
-    cursor: "pointer",
-    boxSizing: "border-box" as const,
-  },
-  dropdownItemLabel: {
-    flex: 1,
-  },
-  dropdownShortcut: {
-    fontSize: 11,
-    color: COLORS.shortcut,
-    marginLeft: 24,
-    fontFamily: "monospace",
-  },
-  separator: {
-    height: 1,
-    background: COLORS.separator,
-    margin: "4px 8px",
-  },
-};

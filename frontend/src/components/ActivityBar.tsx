@@ -1,3 +1,14 @@
+import {
+  IconChat,
+  IconExplorer,
+  IconSearch,
+  IconGit,
+  IconTerminal,
+  IconExtensions,
+  IconRpc,
+  IconSettings,
+} from "../lib/icons";
+
 export type ActivityId =
   | "chat"
   | "explorer"
@@ -15,122 +26,59 @@ interface ActivityBarProps {
 
 interface ActivityDef {
   id: ActivityId;
-  icon: string;
+  Icon: React.FC<{ size?: number; color?: string }>;
   label: string;
   badge?: number;
 }
 
 const ACTIVITIES: ActivityDef[] = [
-  { id: "chat", icon: "💬", label: "Agent Chat" },
-  { id: "explorer", icon: "📁", label: "Explorer" },
-  { id: "search", icon: "🔍", label: "Search" },
-  { id: "git", icon: "⑂", label: "Source Control" },
-  { id: "terminal", icon: "⌘", label: "Terminal" },
-  { id: "extensions", icon: "⧉", label: "Extensions" },
-  { id: "rpc", icon: "📟", label: "RPC Log" },
+  { id: "chat", Icon: IconChat, label: "Agent Chat" },
+  { id: "explorer", Icon: IconExplorer, label: "Explorer" },
+  { id: "search", Icon: IconSearch, label: "Search" },
+  { id: "git", Icon: IconGit, label: "Source Control" },
+  { id: "terminal", Icon: IconTerminal, label: "Terminal" },
+  { id: "extensions", Icon: IconExtensions, label: "Extensions" },
+  { id: "rpc", Icon: IconRpc, label: "RPC Log" },
 ];
-
-const COLORS = {
-  bg: "#14101f",
-  hover: "#2d2350",
-  active: "#4ade80",
-  inactive: "#8b7bb5",
-  dim: "#5a4d80",
-};
 
 export function ActivityBar({ active, onActivate }: ActivityBarProps) {
   return (
-    <div style={styles.bar}>
-      <div style={styles.icons}>
-        {ACTIVITIES.map((a) => (
+    <div className="w-[48px] bg-[var(--color-background-dark)] flex flex-col justify-between border-r border-[var(--color-border)] shrink-0">
+      <div className="flex flex-col">
+        {ACTIVITIES.map(({ id, Icon, label, badge }) => (
           <button
-            key={a.id}
-            title={a.label}
-            onClick={() => onActivate(a.id)}
+            key={id}
+            title={label}
+            onClick={() => onActivate(id)}
+            className="w-[48px] h-[48px] flex items-center justify-center bg-transparent border-none cursor-pointer relative box-border border-l-2 border-transparent text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)] transition-colors"
             style={{
-              ...styles.icon,
-              background: active === a.id ? COLORS.hover : "transparent",
-              borderLeft:
-                active === a.id
-                  ? `2px solid ${COLORS.active}`
-                  : "2px solid transparent",
-              opacity: active === a.id ? 1 : 0.5,
+              backgroundColor: active === id ? "var(--color-border)" : "transparent",
+              borderLeftColor: active === id ? "var(--color-primary)" : "transparent",
+              opacity: active === id ? 1 : 0.5,
             }}
           >
-            <span style={{ fontSize: 20, lineHeight: 1 }}>{a.icon}</span>
-            {a.badge !== undefined && a.badge > 0 && (
-              <span style={styles.badge}>{a.badge}</span>
+            <Icon size={20} />
+            {badge !== undefined && badge > 0 && (
+              <span className="absolute top-[6px] right-[6px] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] rounded-full w-4 h-[16px] text-[9px] font-bold flex items-center justify-center">
+                {badge}
+              </span>
             )}
           </button>
         ))}
       </div>
-      <div style={styles.bottomIcons}>
+      <div className="flex flex-col pb-2">
         <button
           title="Settings"
           onClick={() => onActivate("settings")}
+          className="w-[48px] h-[48px] flex items-center justify-center bg-transparent border-none cursor-pointer relative box-border border-l-2 border-transparent text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)] transition-colors"
           style={{
-            ...styles.icon,
             opacity: active === "settings" ? 1 : 0.5,
-            borderLeft:
-              active === "settings"
-                ? `2px solid ${COLORS.active}`
-                : "2px solid transparent",
+            borderLeftColor: active === "settings" ? "var(--color-primary)" : "transparent",
           }}
         >
-          <span style={{ fontSize: 18 }}>⚙</span>
+          <IconSettings size={18} />
         </button>
       </div>
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  bar: {
-    width: 48,
-    background: COLORS.bg,
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "space-between",
-    borderRight: "1px solid #2d2350",
-    flexShrink: 0,
-  },
-  icons: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 0,
-  },
-  icon: {
-    width: 48,
-    height: 48,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "none",
-    border: "none",
-    cursor: "pointer",
-    color: COLORS.inactive,
-    position: "relative" as const,
-    boxSizing: "border-box" as const,
-  },
-  badge: {
-    position: "absolute" as const,
-    top: 6,
-    right: 6,
-    background: COLORS.active,
-    color: "#0d1f17",
-    borderRadius: 10,
-    width: 16,
-    height: 16,
-    fontSize: 9,
-    fontWeight: 700,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  bottomIcons: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 0,
-    paddingBottom: 8,
-  },
-};

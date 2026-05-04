@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { ws } from "../lib/ws-client";
 import { FileIcon } from "../lib/file-icons";
 import ContextMenu from "./ContextMenu";
+import * as settings from "../lib/settings";
 
 interface FileEntry {
   name: string;
@@ -13,16 +14,6 @@ interface ExplorerPaneProps {
   root: string;
   onFileClick: (path: string, isDir: boolean) => void;
 }
-
-const COLORS = {
-  bg: "#14101f",
-  hover: "#2d2350",
-  active: "#3a2d60",
-  text: "#d4c4ff",
-  textMuted: "#8b7bb5",
-  textDim: "#5a4d80",
-  border: "#2d2350",
-};
 
 export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
@@ -54,19 +45,57 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
   const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [deletingName, setDeletingName] = useState("");
 
+  // Read hidden files preference from settings
+  const [showHiddenFiles, setShowHiddenFiles] = useState(
+    settings.getSettings().explorer.showHiddenFiles,
+  );
+
+  useEffect(() => {
+    const unsub = settings.subscribe(() => {
+      setShowHiddenFiles(settings.getSettings().explorer.showHiddenFiles);
+    });
+    return unsub;
+  }, []);
+
+  // Reload tree when setting changes
+  useEffect(() => {
+    setChildCache(new Map());
+    setExpandedDirs(new Set());
+    loadDir(root);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showHiddenFiles]);
+
+  const isHidden = (name: string): boolean => name.startsWith(".") && name !== "." && name !== "..";
+
+  const sortEntries = (items: FileEntry[]): FileEntry[] => {
+    let filtered = showHiddenFiles ? items : items.filter((e) => !isHidden(e.name));
+    return [...filtered].sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    });
+  };
   // Listen for worktree file change events to refresh explorer
   useEffect(() => {
     const handleWorktreeEvent = (e: MessageEvent) => {
       try {
         const msg = JSON.parse(e.data);
-        if (
-          msg.method === "worktree-file-changed" ||
-          msg.method === "worktree-file-deleted" ||
-          msg.method === "worktree-file-created"
-        ) {
-          // Invalidate child cache for parent dirs and reload root
-          setChildCache(new Map());
-          loadDir(root);
+        if (msg.method === "worktree-file-created" || msg.method === "worktree-file-deleted") {
+          // Only refresh on structural changes, not content edits
+          // Invalidate cache for the parent of the changed file
+          if (msg.params?.path) {
+            const parentPath = msg.params.path.replace(/\/[^/]+$/, "");
+            setChildCache((prev) => {
+              const next = new Map(prev);
+              next.delete(parentPath);
+              // Also delete root if parent is root
+              if (parentPath === root) next.delete(root);
+              return next;
+            });
+            // Only reload root if the change was at root level
+            if (parentPath === root) {
+              loadDir(root);
+            }
+          }
         }
       } catch {
         // Not JSON, ignore
@@ -79,13 +108,6 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
   useEffect(() => {
     loadDir(root);
   }, [root]);
-
-  const sortEntries = (items: FileEntry[]): FileEntry[] => {
-    return [...items].sort((a, b) => {
-      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-    });
-  };
 
   const loadDir = async (path: string) => {
     try {
@@ -356,12 +378,12 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
         gap: 4,
         fontSize: 13,
         borderRadius: 3,
-        color: COLORS.text,
+        color: "var(--color-foreground)",
         height: 22,
-        background: COLORS.hover,
+        background: "var(--color-hover)",
       }}
     >
-      <span style={{ width: 16, textAlign: "center", fontSize: 10, color: COLORS.textDim, flexShrink: 0 }}>
+      <span style={{ width: 16, textAlign: "center", fontSize: 10, color: "var(--color-foreground-dim)", flexShrink: 0 }}>
         {creatingIsDir ? "" : "📄"}
       </span>
       <input
@@ -377,10 +399,10 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
         placeholder={creatingIsDir ? "New folder name" : "New file name"}
         style={{
           flex: 1,
-          background: COLORS.bg,
-          border: `1px solid ${COLORS.border}`,
+          background: "var(--color-background-dark)",
+          border: "1px solid var(--color-border)",
           borderRadius: 2,
-          color: COLORS.text,
+          color: "var(--color-foreground)",
           fontSize: 13,
           padding: "0 4px",
           outline: "none",
@@ -430,11 +452,11 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
             gap: 4,
             fontSize: 13,
             borderRadius: 3,
-            color: COLORS.text,
+            color: "var(--color-foreground)",
             height: 22,
           }}
           onMouseEnter={(e) =>
-            (e.currentTarget.style.background = COLORS.hover)
+            (e.currentTarget.style.background = "var(--color-hover)")
           }
           onMouseLeave={(e) =>
             (e.currentTarget.style.background = "transparent")
@@ -445,7 +467,7 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
               width: 16,
               textAlign: "center",
               fontSize: 10,
-              color: COLORS.textDim,
+              color: "var(--color-foreground-dim)",
               flexShrink: 0,
             }}
           >
@@ -465,10 +487,10 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
               onClick={(e) => e.stopPropagation()}
               style={{
                 flex: 1,
-                background: COLORS.bg,
-                border: `1px solid ${COLORS.border}`,
+                background: "var(--color-background-dark)",
+                border: "1px solid var(--color-border)",
                 borderRadius: 2,
-                color: COLORS.text,
+                color: "var(--color-foreground)",
                 fontSize: 13,
                 padding: "0 4px",
                 outline: "none",
@@ -522,10 +544,29 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
 
   return (
     <div
-      style={{ height: "100%", overflow: "auto", background: COLORS.bg, position: "relative" }}
+      style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--color-background-dark)", position: "relative" }}
       onContextMenu={handleRootContextMenu}
     >
-      {renderEntries(root, entries, 0)}
+      {/* Header */}
+      <div
+        style={{
+          padding: "4px 10px",
+          fontSize: 11,
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.5px",
+          color: "var(--color-foreground-muted)",
+          borderBottom: "1px solid var(--color-border)",
+          flexShrink: 0,
+          userSelect: "none",
+        }}
+      >
+        EXPLORER
+      </div>
+      {/* File tree */}
+      <div style={{ flex: 1, overflow: "auto" }}>
+        {renderEntries(root, entries, 0)}
+      </div>
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
@@ -542,17 +583,17 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
             left: 0,
             right: 0,
             padding: "6px 8px",
-            background: "rgba(248,113,113,0.15)",
-            borderTop: `1px solid ${COLORS.border}`,
+            background: "var(--color-red)/15",
+            borderTop: "1px solid var(--color-border)",
             display: "flex",
             alignItems: "center",
             gap: 8,
             fontSize: 12,
-            color: COLORS.text,
+            color: "var(--color-foreground)",
             zIndex: 10,
           }}
         >
-          <span style={{ color: "var(--red)", fontWeight: 600 }}>⚠ Delete</span>
+          <span style={{ color: "var(--color-red)", fontWeight: 600 }}>⚠ Delete</span>
           <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             "{deletingName}"
           </span>
@@ -562,9 +603,9 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
               padding: "2px 10px",
               fontSize: 11,
               borderRadius: 3,
-              border: `1px solid ${COLORS.border}`,
+              border: "1px solid var(--color-border)",
               background: "transparent",
-              color: COLORS.textMuted,
+              color: "var(--color-foreground-muted)",
               cursor: "pointer",
             }}
           >
@@ -576,9 +617,9 @@ export default function ExplorerPane({ root, onFileClick }: ExplorerPaneProps) {
               padding: "2px 10px",
               fontSize: 11,
               borderRadius: 3,
-              border: "1px solid var(--red)",
-              background: "rgba(248,113,113,0.2)",
-              color: "var(--red)",
+              border: "1px solid var(--color-red)",
+              background: "var(--color-red)/20",
+              color: "var(--color-red)",
               cursor: "pointer",
               fontWeight: 600,
             }}

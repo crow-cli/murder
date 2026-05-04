@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ws } from "../lib/ws-client";
 import { FileIcon } from "../lib/file-icons";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Separator } from "./ui/separator";
+import { IconClose } from "../lib/icons";
+import { cn } from "../lib/utils";
+import * as settings from "../lib/settings";
 
 interface DirEntry {
   name: string;
@@ -22,22 +28,6 @@ const QUICK_PICKS = [
   { label: "/tmp", path: "/tmp" },
 ];
 
-const COLORS = {
-  overlay: "rgba(0,0,0,0.7)",
-  bg: "#1a1230",
-  bgDark: "#14101f",
-  border: "#2d2350",
-  borderLight: "#3a2d60",
-  text: "#d4c4ff",
-  textMuted: "#8b7bb5",
-  textDim: "#5a4d80",
-  hover: "#2d2350",
-  accent: "#4ade80",
-  accentBg: "#4ade8022",
-  inputBg: "#2d2350",
-  danger: "#f87171",
-};
-
 export function FolderPicker({
   initialPath,
   onSelect,
@@ -49,6 +39,10 @@ export function FolderPicker({
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const isHidden = (name: string): boolean => name.startsWith(".") && name !== "." && name !== "..";
+
+  const showHidden = settings.getSettings().folderPicker.showHiddenFiles;
+
   const loadDir = useCallback(async (path: string) => {
     setLoading(true);
     setError(null);
@@ -56,7 +50,8 @@ export function FolderPicker({
       const result = await ws.invoke<{ entries: DirEntry[] }>("read_dir", {
         path,
       });
-      const sorted = [...result.entries].sort((a, b) => {
+      const filtered = showHidden ? result.entries : result.entries.filter((e) => !isHidden(e.name));
+      const sorted = [...filtered].sort((a, b) => {
         if (a.is_dir && !b.is_dir) return -1;
         if (!a.is_dir && b.is_dir) return 1;
         return a.name.localeCompare(b.name);
@@ -100,220 +95,95 @@ export function FolderPicker({
 
   return (
     <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: COLORS.overlay,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-      }}
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-[1000]"
       onClick={onClose}
     >
       <div
-        style={{
-          background: COLORS.bg,
-          border: `1px solid ${COLORS.border}`,
-          borderRadius: 8,
-          width: 520,
-          maxHeight: 480,
-          display: "flex",
-          flexDirection: "column",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-          color: COLORS.text,
-        }}
+        className="bg-[var(--color-background)] border border-[var(--color-border)] rounded-lg w-[520px] max-h-[480px] flex flex-col shadow-xl text-[var(--color-foreground)]"
+        style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div
-          style={{
-            padding: "12px 16px",
-            borderBottom: `1px solid ${COLORS.border}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Open Folder</span>
-          <button
-            onClick={onClose}
-            style={{
-              fontSize: 18,
-              color: COLORS.textMuted,
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              lineHeight: 1,
-              padding: "0 4px",
-            }}
-          >
-            ×
-          </button>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+          <span className="text-[13px] font-semibold">Open Folder</span>
+          <Button variant="ghost" size="icon" className="h-6 w-6 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-border)]" onClick={onClose}>
+            <IconClose size={16} />
+          </Button>
         </div>
 
         {/* Quick picks */}
-        <div
-          style={{
-            padding: "8px 16px",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-            borderBottom: `1px solid ${COLORS.border}`,
-          }}
-        >
+        <div className="flex flex-wrap gap-1.5 px-4 py-2 border-b border-[var(--color-border)]">
           {QUICK_PICKS.map((qp) => (
-            <button
+            <Button
               key={qp.path}
+              variant={currentPath === qp.path ? "default" : "outline"}
+              size="sm"
               onClick={() => navigateTo(qp.path)}
-              style={{
-                fontSize: 11,
-                padding: "2px 8px",
-                borderRadius: 3,
-                border: `1px solid ${COLORS.border}`,
-                background:
-                  currentPath === qp.path ? COLORS.accentBg : COLORS.hover,
-                color:
-                  currentPath === qp.path ? COLORS.accent : COLORS.textMuted,
-                cursor: "pointer",
-              }}
+              className={cn(
+                "h-6 text-[11px] px-2 border-[var(--color-border)]",
+                currentPath === qp.path
+                  ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:bg-[var(--color-primary)]/90"
+                  : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)] hover:text-[var(--color-foreground)]"
+              )}
             >
               {qp.label}
-            </button>
+            </Button>
           ))}
         </div>
 
         {/* Path input */}
-        <div
-          style={{
-            padding: "8px 16px",
-            borderBottom: `1px solid ${COLORS.border}`,
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
-          <button
+        <div className="flex gap-2 px-4 py-2 border-b border-[var(--color-border)] items-center">
+          <Button
+            variant="outline"
+            size="sm"
             onClick={navigateUp}
             disabled={currentPath === "/"}
-            style={{
-              fontSize: 12,
-              padding: "2px 8px",
-              borderRadius: 3,
-              border: `1px solid ${COLORS.border}`,
-              background: COLORS.hover,
-              color: currentPath === "/" ? COLORS.textDim : COLORS.text,
-              cursor: currentPath === "/" ? "default" : "pointer",
-              opacity: currentPath === "/" ? 0.5 : 1,
-            }}
+            className="h-7 px-2 text-xs border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)] hover:text-[var(--color-foreground)] disabled:opacity-50"
           >
             ↑
-          </button>
-          <input
-            ref={inputRef}
+          </Button>
+          <Input
+            ref={inputRef as any}
             value={currentPath}
             onChange={(e) => setCurrentPath(e.target.value)}
             onKeyDown={handlePathInput}
-            style={{
-              flex: 1,
-              padding: "4px 8px",
-              fontSize: 12,
-              background: COLORS.inputBg,
-              border: `1px solid ${COLORS.borderLight}`,
-              borderRadius: 3,
-              color: COLORS.text,
-              outline: "none",
-            }}
+            className="h-7 text-xs bg-[var(--color-border)] border-[var(--color-active)] focus-visible:ring-[var(--color-primary)]"
           />
         </div>
 
         {/* Breadcrumb */}
-        <div
-          style={{
-            padding: "6px 16px",
-            fontSize: 11,
-            color: COLORS.textDim,
-            borderBottom: `1px solid ${COLORS.border}`,
-            display: "flex",
-            gap: 4,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          <span
-            style={{ cursor: "pointer" }}
-            onClick={() => navigateTo("/")}
-            onMouseEnter={(e) => (e.currentTarget.style.color = COLORS.accent)}
-            onMouseLeave={(e) => (e.currentTarget.style.color = COLORS.textDim)}
-          >
-            /
-          </span>
+        <div className="flex gap-1 flex-wrap items-center px-4 py-1.5 text-[11px] text-[var(--color-foreground-dim)] border-b border-[var(--color-border)]">
+          <BreadcrumbLink
+            path="/"
+            currentPath={currentPath}
+            onClick={navigateTo}
+          />
           {pathParts.map((part, i) => (
-            <span key={i}>
-              <span style={{ color: COLORS.border }}>/</span>
-              <span
-                style={{ cursor: "pointer" }}
-                onClick={() =>
-                  navigateTo("/" + pathParts.slice(0, i + 1).join("/"))
-                }
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.color = COLORS.accent)
-                }
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.color = COLORS.textDim)
-                }
+            <span key={i} className="flex items-center gap-1">
+              <span className="text-[var(--color-border)]">/</span>
+              <BreadcrumbLink
+                path={"/" + pathParts.slice(0, i + 1).join("/")}
+                currentPath={currentPath}
+                onClick={navigateTo}
               >
                 {part}
-              </span>
+              </BreadcrumbLink>
             </span>
           ))}
         </div>
 
         {/* File list */}
-        <div
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: "4px 0",
-            minHeight: 200,
-            maxHeight: 260,
-          }}
-        >
+        <div className="flex-1 overflow-y-auto py-1 min-h-[200px] max-h-[260px]">
           {loading && (
-            <div
-              style={{
-                padding: 16,
-                textAlign: "center",
-                color: COLORS.textMuted,
-              }}
-            >
-              Loading...
-            </div>
+            <div className="p-4 text-center text-[var(--color-muted-foreground)]">Loading...</div>
           )}
           {error && (
-            <div
-              style={{
-                padding: 16,
-                textAlign: "center",
-                color: COLORS.danger,
-                fontSize: 12,
-              }}
-            >
+            <div className="p-4 text-center text-[var(--color-destructive)] text-[12px]">
               {error}
             </div>
           )}
           {!loading && !error && entries.length === 0 && (
-            <div
-              style={{
-                padding: 16,
-                textAlign: "center",
-                color: COLORS.textMuted,
-                fontSize: 12,
-              }}
-            >
+            <div className="p-4 text-center text-[var(--color-muted-foreground)] text-[12px]">
               Empty directory
             </div>
           )}
@@ -321,28 +191,22 @@ export function FolderPicker({
             <div
               key={entry.path}
               onClick={() => {
-                if (entry.is_dir) {
-                  navigateTo(entry.path);
-                }
+                if (entry.is_dir) navigateTo(entry.path);
               }}
+              className="flex items-center gap-2 px-4 py-1 text-[13px] transition-colors"
               style={{
-                padding: "4px 16px",
-                fontSize: 13,
                 cursor: entry.is_dir ? "pointer" : "default",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                color: entry.is_dir ? COLORS.text : COLORS.textMuted,
+                color: entry.is_dir ? "var(--color-foreground)" : "var(--color-muted-foreground)",
               }}
               onMouseEnter={(e) =>
-                (e.currentTarget.style.background = COLORS.hover)
+                (e.currentTarget.style.background = "var(--color-border)")
               }
               onMouseLeave={(e) =>
                 (e.currentTarget.style.background = "transparent")
               }
             >
               <FileIcon name={entry.name} isDir={entry.is_dir} size={14} />
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span className="overflow-hidden text-ellipsis whitespace-nowrap">
                 {entry.name}
               </span>
             </div>
@@ -350,46 +214,48 @@ export function FolderPicker({
         </div>
 
         {/* Footer */}
-        <div
-          style={{
-            padding: "12px 16px",
-            borderTop: `1px solid ${COLORS.border}`,
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 8,
-          }}
-        >
-          <button
-            onClick={onClose}
-            style={{
-              padding: "6px 16px",
-              fontSize: 12,
-              borderRadius: 4,
-              border: `1px solid ${COLORS.border}`,
-              background: COLORS.hover,
-              color: COLORS.textMuted,
-              cursor: "pointer",
-            }}
-          >
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-[var(--color-border)]">
+          <Button variant="outline" size="sm" onClick={onClose}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
             onClick={() => onSelect(currentPath)}
-            style={{
-              padding: "6px 16px",
-              fontSize: 12,
-              borderRadius: 4,
-              border: "none",
-              background: COLORS.accent,
-              color: "#0d1f17",
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
           >
             Select This Folder
-          </button>
+          </Button>
         </div>
       </div>
     </div>
+  );
+}
+
+function BreadcrumbLink({
+  path,
+  currentPath,
+  onClick,
+  children,
+}: {
+  path: string;
+  currentPath: string;
+  onClick: (p: string) => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <span
+      className="cursor-pointer transition-colors"
+      style={{
+        color: currentPath === path ? "var(--color-primary)" : "var(--color-foreground-dim)",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.color = "var(--color-primary)")}
+      onMouseLeave={(e) =>
+        (e.currentTarget.style.color =
+          currentPath === path ? "var(--color-primary)" : "var(--color-foreground-dim)")
+      }
+      onClick={() => onClick(path)}
+    >
+      {children ?? path}
+    </span>
   );
 }

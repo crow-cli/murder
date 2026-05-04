@@ -1,3 +1,4 @@
+import './lib/monaco-workers'; // Must be imported BEFORE monaco-editor initializes
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'

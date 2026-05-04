@@ -9,19 +9,7 @@
 import { useRef, useEffect, useState } from "react";
 import * as monaco from "monaco-editor";
 
-// ─── Shared ──────────────────────────────────────────────────────────────────
-
-const COLORS = {
-  bg: "#1e1640",
-  bgDark: "#14101f",
-  text: "#d4c4ff",
-  textMuted: "#8b7bb5",
-  border: "#2d2350",
-  green: "#4ade80",
-  red: "#f87171",
-  greenBg: "#4ade8015",
-  redBg: "#f8717115",
-};
+// ─── Shared ─────────────────────────────────────────────────────────────────
 
 function getLanguage(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() || "";
@@ -87,12 +75,10 @@ export function FileReadView({ content, path, maxHeight = 300 }: FileReadViewPro
   return (
     <div
       ref={containerRef}
+      className="rounded overflow-hidden border border-[var(--color-border)]"
       style={{
         height: Math.min(content.split("\n").length * 18 + 16, maxHeight),
         minHeight: 60,
-        borderRadius: 4,
-        overflow: "hidden",
-        border: `1px solid ${COLORS.border}`,
       }}
     />
   );
@@ -161,12 +147,10 @@ export function FileWriteView({ content, path, maxHeight = 300 }: FileWriteViewP
   return (
     <div
       ref={containerRef}
+      className="rounded overflow-hidden border border-[var(--color-primary)]/25"
       style={{
         height: Math.min(content.split("\n").length * 18 + 16, maxHeight),
         minHeight: 60,
-        borderRadius: 4,
-        overflow: "hidden",
-        border: `1px solid ${COLORS.green}44`,
       }}
     />
   );
@@ -228,15 +212,13 @@ export function FileEditView({ beforeContent, afterContent, path, maxHeight = 40
   return (
     <div
       ref={containerRef}
+      className="rounded overflow-hidden border border-[var(--color-border)]"
       style={{
         height: Math.min(
           Math.max(beforeContent.split("\n").length, afterContent.split("\n").length) * 18 + 16,
           maxHeight,
         ),
         minHeight: 80,
-        borderRadius: 4,
-        overflow: "hidden",
-        border: `1px solid ${COLORS.border}`,
       }}
     />
   );
@@ -247,17 +229,17 @@ export function FileEditView({ beforeContent, afterContent, path, maxHeight = 40
 if (typeof document !== "undefined" && !(window as any).__writeViewStyleInjected) {
   const style = document.createElement("style");
   style.textContent = `
-    .write-view-line { background: ${COLORS.greenBg} !important; }
+    .write-view-line { background: #4ade8015 !important; }
     .write-view-glyph::before {
       content: "+";
-      color: ${COLORS.green};
+      color: #4ade80;
       font-weight: bold;
       font-size: 11px;
       position: absolute;
       left: 2px;
     }
     .monaco-diff-editor .margin {
-      background: ${COLORS.bgDark} !important;
+      background: var(--color-background-dark) !important;
     }
   `;
   document.head.appendChild(style);

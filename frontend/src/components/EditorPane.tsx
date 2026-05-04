@@ -20,7 +20,8 @@ export interface EditorPaneHandle {
   getModelInfo: () => { versionId: number };
 }
 
-const COLORS = {
+// Monaco theme colors (Monaco API only — not React styles)
+const MONACO_THEME_COLORS = {
   bg: "#1e1640",
   text: "#d4c4ff",
   lineHighlight: "#2d2350",
@@ -74,10 +75,10 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
         inherit: true,
         rules: [],
         colors: {
-          "editor.background": COLORS.bg,
-          "editor.foreground": COLORS.text,
-          "editor.lineHighlightBackground": COLORS.lineHighlight,
-          "editor.selectionBackground": COLORS.selection,
+          "editor.background": MONACO_THEME_COLORS.bg,
+          "editor.foreground": MONACO_THEME_COLORS.text,
+          "editor.lineHighlightBackground": MONACO_THEME_COLORS.lineHighlight,
+          "editor.selectionBackground": MONACO_THEME_COLORS.selection,
           "editorCursor.foreground": "#4ade80",
           "editorLineNumber.foreground": "#5a4d80",
           "editorLineNumber.activeForeground": "#d4c4ff",
@@ -169,7 +170,6 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
       return () => {
         container?.removeEventListener('keydown', handleEditorKeydown, true);
         editor.dispose();
-        editor.dispose();
         // Clean up all models on unmount (full component destruction)
         for (const [, model] of modelRegistry) {
           model.dispose();
@@ -220,7 +220,7 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
       return () => disposable.dispose();
     }, [path, language]);
 
-    return <div ref={containerRef} style={{ flex: 1, overflow: "hidden", ...(height ? { height } : {}) }} />;
+    return <div ref={containerRef} className="absolute inset-0" style={height ? { height } : undefined} />;
   },
 );
 

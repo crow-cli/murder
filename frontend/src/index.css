@@ -1,3 +1,50 @@
+@import "tailwindcss";
+
+@theme {
+  /* Core backgrounds */
+  --color-background: #1a1230;
+  --color-background-dark: #14101f;
+  --color-background-deeper: #0d0a1a;
+  --color-card: #1e1640;
+  --color-card-foreground: #d4c4ff;
+  --color-popover: #1e1640;
+  --color-popover-foreground: #d4c4ff;
+
+  /* Foregrounds */
+  --color-foreground: #d4c4ff;
+  --color-foreground-muted: #8b7bb5;
+  --color-foreground-dim: #5a4d80;
+
+  /* Accent colors */
+  --color-primary: #4ade80;
+  --color-primary-foreground: #0d1f17;
+  --color-primary-faint: #4ade8022;
+  --color-secondary: #2d2350;
+  --color-secondary-foreground: #d4c4ff;
+  --color-muted: #2d2350;
+  --color-muted-foreground: #8b7bb5;
+  --color-accent: #2d2350;
+  --color-accent-foreground: #d4c4ff;
+  --color-destructive: #f87171;
+  --color-destructive-foreground: #ffffff;
+  --color-active: #3a2d60;
+  --color-hover: #2d2350;
+  --color-border: #2d2350;
+  --color-input: #2d2350;
+  --color-ring: #4ade80;
+  --color-statusbar-workspace: #2d2350;
+
+  /* Extended palette (for terminals, links, etc.) */
+  --color-blue: #60a5fa;
+  --color-yellow: #fbbf24;
+  --color-red: #ff6b8a;
+  --color-magenta: #c084fc;
+  --color-cyan: #22d3ee;
+  --color-white: #e2e8f0;
+
+  --radius: 0.5rem;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -78,4 +125,39 @@ textarea {
 .chat-messages .monaco-editor .monaco-scrollable-element .scrollbar,
 .chat-messages .monaco-diff-editor .monaco-scrollable-element .scrollbar {
     display: none !important;
+}
+
+/* ── Mosaic theme overrides ───────────────────────────────── */
+.murder-mosaic-theme .mosaic-root {
+    background: var(--color-background-dark) !important;
+}
+.murder-mosaic-theme .mosaic-window-toolbar {
+    background: var(--color-background) !important;
+    border-bottom: 1px solid var(--color-border) !important;
+    color: var(--color-foreground) !important;
+}
+.murder-mosaic-theme .mosaic-window-body {
+    background: var(--color-background-dark) !important;
+    min-height: 0 !important;
+}
+.murder-mosaic-theme .mosaic-tile {
+    border: 2px solid var(--color-border) !important;
+    border-radius: 0 !important;
+}
+.murder-mosaic-theme .mosaic-preview {
+    background: var(--color-card) !important;
+    border: 1px solid var(--color-border) !important;
+    border-radius: 0 !important;
+}
+.murder-mosaic-theme .mosaic-window-toolbar .mosaic-window-controls button {
+    color: var(--color-foreground-dim) !important;
+}
+.murder-mosaic-theme .mosaic-window-toolbar .mosaic-window-controls button:hover {
+    color: var(--color-foreground) !important;
+}
+.murder-mosaic-theme .mosaic-split {
+    background: var(--color-background-dark) !important;
+}
+.murder-mosaic-theme .mosaic-split-line {
+    background: var(--color-border) !important;
 }

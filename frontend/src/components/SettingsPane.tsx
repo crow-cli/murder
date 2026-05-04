@@ -3,16 +3,17 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import * as monaco from "monaco-editor";
 import * as settings from "../lib/settings";
 import { ws } from "../lib/ws-client";
+import { Button } from "./ui/button";
+import { cn } from "../lib/utils";
 
-const COLORS = {
+// Monaco editor theme colors (must be JS objects for monaco.editor.defineTheme)
+const MONACO_THEME_COLORS = {
   bg: "#14101f",
   bgSecondary: "#1a1230",
-  border: "#2d2350",
   text: "#d4c4ff",
   textMuted: "#8b7bb5",
   textDim: "#5a4d80",
   hover: "#2d2350",
-  active: "#3a2d60",
   accent: "#4ade80",
   accentBg: "#4ade8022",
 };
@@ -97,13 +98,13 @@ export default function SettingsPane() {
       inherit: true,
       rules: [],
       colors: {
-        "editor.background": COLORS.bgSecondary,
-        "editor.foreground": COLORS.text,
-        "editor.lineHighlightBackground": COLORS.hover,
-        "editor.selectionBackground": COLORS.accentBg,
-        "editorCursor.foreground": COLORS.accent,
-        "editorLineNumber.foreground": COLORS.textDim,
-        "editorLineNumber.activeForeground": COLORS.text,
+        "editor.background": MONACO_THEME_COLORS.bgSecondary,
+        "editor.foreground": MONACO_THEME_COLORS.text,
+        "editor.lineHighlightBackground": MONACO_THEME_COLORS.hover,
+        "editor.selectionBackground": MONACO_THEME_COLORS.accentBg,
+        "editorCursor.foreground": MONACO_THEME_COLORS.accent,
+        "editorLineNumber.foreground": MONACO_THEME_COLORS.textDim,
+        "editorLineNumber.activeForeground": MONACO_THEME_COLORS.text,
       },
     });
 
@@ -185,7 +186,7 @@ export default function SettingsPane() {
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        background: COLORS.bg,
+        background: "var(--color-background-dark)",
         height: "100%",
       }}
     >
@@ -196,57 +197,47 @@ export default function SettingsPane() {
           alignItems: "center",
           justifyContent: "space-between",
           padding: "6px 12px",
-          borderBottom: `1px solid ${COLORS.border}`,
+          borderBottom: "1px solid var(--color-border)",
           flexShrink: 0,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-foreground)" }}>
             Settings
           </span>
-          <span style={{ fontSize: 11, color: COLORS.textMuted }}>
+          <span style={{ fontSize: 11, color: "var(--color-foreground-muted)" }}>
             {loading ? "loading..." : (configPath ?? "no config path")}
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div className="flex items-center gap-1.5">
           {saved && (
-            <span style={{ fontSize: 11, color: COLORS.accent }}>✓ Saved</span>
+            <span className="text-[11px] text-[var(--color-primary)]">✓ Saved</span>
           )}
           {hasUnsaved && (
-            <span style={{ fontSize: 11, color: COLORS.textMuted }}>
+            <span className="text-[11px] text-[var(--color-foreground-muted)]">
               ● Unsaved
             </span>
           )}
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={handleReset}
-            style={{
-              padding: "2px 10px",
-              fontSize: 11,
-              borderRadius: 3,
-              border: `1px solid ${COLORS.border}`,
-              background: "transparent",
-              color: COLORS.textMuted,
-              cursor: "pointer",
-            }}
+            className="h-6 text-xs border-[var(--color-border)] text-[var(--color-foreground-muted)] hover:bg-[var(--color-hover)] hover:text-[var(--color-foreground)]"
           >
             Reset
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
             onClick={handleSave}
             disabled={!hasUnsaved}
-            style={{
-              padding: "2px 10px",
-              fontSize: 11,
-              borderRadius: 3,
-              border: "none",
-              background: hasUnsaved ? COLORS.accent : COLORS.bgSecondary,
-              color: hasUnsaved ? COLORS.bg : COLORS.textMuted,
-              cursor: hasUnsaved ? "pointer" : "default",
-              fontWeight: 600,
-            }}
+            className={cn(
+              "h-6 text-xs",
+              !hasUnsaved && "opacity-50 pointer-events-none"
+            )}
           >
             Save
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -255,10 +246,10 @@ export default function SettingsPane() {
         <div
           style={{
             padding: "4px 12px",
-            background: "rgba(248,113,113,0.1)",
-            borderBottom: `1px solid ${COLORS.border}`,
+            background: "var(--color-red)/10",
+            borderBottom: "1px solid var(--color-border)",
             fontSize: 12,
-            color: "#f87171",
+            color: "var(--color-red)",
             flexShrink: 0,
           }}
         >
@@ -274,7 +265,7 @@ export default function SettingsPane() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: COLORS.textMuted,
+            color: "var(--color-foreground-muted)",
           }}
         >
           Loading settings...
@@ -287,9 +278,9 @@ export default function SettingsPane() {
       <div
         style={{
           padding: "4px 12px",
-          borderTop: `1px solid ${COLORS.border}`,
+          borderTop: "1px solid var(--color-border)",
           fontSize: 11,
-          color: COLORS.textDim,
+          color: "var(--color-foreground-dim)",
           flexShrink: 0,
         }}
       >

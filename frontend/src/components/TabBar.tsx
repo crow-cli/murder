@@ -1,4 +1,7 @@
 import { FileIcon } from "../lib/file-icons";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import { IconClose } from "../lib/icons";
 
 export interface OpenFile {
   path: string;
@@ -13,18 +16,6 @@ interface TabBarProps {
   onTabClose: (path: string) => void;
 }
 
-const COLORS = {
-  bg: "#14101f",
-  bgActive: "#1e1640",
-  border: "#2d2350",
-  text: "#d4c4ff",
-  textInactive: "#5a4d80",
-  textDim: "#3a2d60",
-  accent: "#4ade80",
-  danger: "#f87171",
-  hover: "#2d2350",
-};
-
 export function TabBar({
   openFiles,
   activePath,
@@ -35,16 +26,7 @@ export function TabBar({
   if (openFiles.length === 0) return null;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        background: COLORS.bg,
-        borderBottom: `1px solid ${COLORS.border}`,
-        overflowX: "auto",
-        flexShrink: 0,
-        height: 35,
-      }}
-    >
+    <div className="flex bg-[var(--color-background-dark)] border-b border-[var(--color-border)] overflow-x-auto shrink-0 h-[35px]">
       {openFiles.map((file) => {
         const isActive = file.path === activePath;
         const isDirty = dirtyFiles.has(file.path);
@@ -53,78 +35,37 @@ export function TabBar({
         return (
           <div
             key={file.path}
-            onClick={() => onTabClick(file.path)}
+            className="flex items-center gap-1.5 px-3 text-[13px] cursor-pointer select-none border-r border-[var(--color-border)] min-w-0 relative transition-colors"
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "0 12px",
-              fontSize: 13,
-              cursor: "pointer",
-              userSelect: "none",
-              background: isActive ? COLORS.bgActive : "transparent",
-              color: isActive ? COLORS.text : COLORS.textInactive,
-              borderRight: `1px solid ${COLORS.border}`,
-              minWidth: 0,
-              position: "relative",
+              backgroundColor: isActive ? "var(--color-card)" : "transparent",
+              color: isActive ? "var(--color-foreground)" : "var(--color-foreground-dim)",
             }}
+            onClick={() => onTabClick(file.path)}
           >
             {isActive && (
-              <div
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  height: 1,
-                  background: COLORS.accent,
-                }}
-              />
+              <div className="absolute top-0 left-0 right-0 h-[1px] bg-[var(--color-primary)]" />
             )}
             <FileIcon name={fileName} size={12} />
-            <span
-              style={{
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                maxWidth: 150,
-              }}
-            >
+            <span className="overflow-hidden text-ellipsis whitespace-nowrap max-w-[150px]">
               {fileName}
             </span>
             {isDirty && (
-              <span style={{ fontSize: 10, color: COLORS.accent }}>●</span>
+              <span className="text-[8px] leading-none text-[var(--color-primary)]">●</span>
             )}
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
+              className="ml-auto h-5 w-5 p-0 rounded-sm text-[var(--color-active)] hover:text-[var(--color-destructive)] hover:bg-[var(--color-border)]"
+              style={{
+                color: isActive ? undefined : "transparent",
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 onTabClose(file.path);
               }}
-              style={{
-                marginLeft: "auto",
-                padding: "0 4px",
-                fontSize: 16,
-                lineHeight: 1,
-                color: isActive ? COLORS.textDim : "transparent",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                borderRadius: 3,
-                flexShrink: 0,
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = COLORS.danger;
-                e.currentTarget.style.background = COLORS.hover;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = isActive
-                  ? COLORS.textDim
-                  : "transparent";
-                e.currentTarget.style.background = "none";
-              }}
             >
-              ×
-            </button>
+              <IconClose size={14} />
+            </Button>
           </div>
         );
       })}

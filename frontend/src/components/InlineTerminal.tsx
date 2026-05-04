@@ -23,7 +23,8 @@ interface InlineTerminalProps {
   exitCode?: number;
 }
 
-const COLORS = {
+// Terminal color theme (xterm.js only — not React styles)
+const TERMINAL_THEME = {
   bg: "#0d0a1a",
   fg: "#d4c4ff",
   cursor: "#4ade80",
@@ -81,7 +82,7 @@ export default function InlineTerminal({
       cursorStyle: "block",
       fontSize: 12,
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-      theme: COLORS,
+      theme: TERMINAL_THEME,
       scrollback: 5000,
       convertEol: true,
       rows: 12,
@@ -237,65 +238,20 @@ export default function InlineTerminal({
   }, []);
 
   return (
-    <div className="inline-terminal-container" style={styles.root}>
-      <div style={styles.header}>
-        <span style={styles.commandLabel}>
-          <span style={styles.dollar}>$</span> {commandLabel}
+    <div className="rounded-md border border-[var(--color-border)] overflow-hidden bg-[var(--color-background-deeper)] text-xs">
+      <div className="flex items-center justify-between px-3 py-1 border-b border-[var(--color-border)] bg-[var(--color-background-dark)]">
+        <span className="text-[11px] font-mono text-[var(--color-foreground)] whitespace-nowrap overflow-hidden text-ellipsis max-w-[80%]">
+          <span className="text-[var(--color-primary)] font-bold">$</span> {commandLabel}
         </span>
         {status === "exited" && (
-          <span style={styles.exitBadge}>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[var(--color-primary-faint)] text-[var(--color-primary)] font-semibold flex-shrink-0">
             {initialExitCode === 0 || exitCodeRef.current === 0
               ? "✓ exited 0"
               : `✗ exited ${initialExitCode ?? exitCodeRef.current ?? "?"}`}
           </span>
         )}
       </div>
-      <div ref={containerRef} style={styles.terminalContainer} />
+      <div ref={containerRef} className="h-48 min-h-[120px] overflow-hidden" />
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  root: {
-    borderRadius: 6,
-    border: "1px solid #2d2350",
-    overflow: "hidden",
-    background: COLORS.bg,
-    fontSize: 12,
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "4px 10px",
-    borderBottom: "1px solid #2d2350",
-    background: "#14101f",
-  },
-  commandLabel: {
-    fontSize: 11,
-    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-    color: "#d4c4ff",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    maxWidth: "80%",
-  },
-  dollar: {
-    color: "#4ade80",
-    fontWeight: 700,
-  },
-  exitBadge: {
-    fontSize: 10,
-    padding: "1px 6px",
-    borderRadius: 3,
-    background: "#4ade8022",
-    color: "#4ade80",
-    fontWeight: 600,
-    flexShrink: 0,
-  },
-  terminalContainer: {
-    height: 200,
-    minHeight: 120,
-    overflow: "hidden",
-  },
-};

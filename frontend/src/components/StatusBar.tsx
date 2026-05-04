@@ -11,14 +11,6 @@ interface StatusBarProps {
   workspaceName: string;
 }
 
-const COLORS = {
-  bg: "#0d7a3e",
-  bgNoFolder: "#3b2d5a",
-  text: "#ffffff",
-  textDim: "#c8e6c9",
-  itemHover: "#1a8f4e",
-};
-
 export function StatusBar({
   connected,
   saving,
@@ -31,18 +23,24 @@ export function StatusBar({
   wordWrap,
   workspaceName,
 }: StatusBarProps) {
-  const bg = workspaceName ? COLORS.bg : COLORS.bgNoFolder;
+  const bgColor = workspaceName ? "var(--color-statusbar-workspace)" : "var(--color-active)";
 
   return (
-    <div style={{ ...styles.bar, background: bg }}>
-      <div style={styles.left}>
+    <div
+      className="h-[22px] flex items-center px-2 text-[12px] text-white shrink-0 font-medium flex-nowrap"
+      style={{ backgroundColor: bgColor }}
+    >
+      <div className="flex items-center gap-1">
         <StatusBarItem>
-          {connected ? "✓" : "○"} {saving ? "Saving…" : workspaceName || "No Folder"}
+          {connected ? "✓" : "○"}{" "}
+          {saving ? "Saving…" : workspaceName || "No Folder"}
         </StatusBarItem>
         {dirty && <StatusBarItem>●</StatusBarItem>}
       </div>
-      <div style={styles.right}>
-        <StatusBarItem>Ln {line}, Col {col}</StatusBarItem>
+      <div className="flex items-center gap-[2px] ml-auto">
+        <StatusBarItem>
+          Ln {line}, Col {col}
+        </StatusBarItem>
         <StatusBarItem>Spaces: 4</StatusBarItem>
         <StatusBarItem>{encoding}</StatusBarItem>
         <StatusBarItem>{lineEnding}</StatusBarItem>
@@ -55,49 +53,8 @@ export function StatusBar({
 
 function StatusBarItem({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      style={styles.item}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = COLORS.itemHover;
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "transparent";
-      }}
-    >
+    <div className="px-2 h-[22px] flex items-center cursor-pointer text-[12px] whitespace-nowrap hover:bg-[var(--color-primary)]/80 transition-colors">
       {children}
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  bar: {
-    height: 22,
-    display: "flex",
-    alignItems: "center",
-    padding: "0 8px",
-    fontSize: 12,
-    color: COLORS.text,
-    flexShrink: 0,
-    fontWeight: 500,
-  },
-  left: {
-    display: "flex",
-    alignItems: "center",
-    gap: 4,
-  },
-  right: {
-    display: "flex",
-    alignItems: "center",
-    gap: 2,
-    marginLeft: "auto",
-  },
-  item: {
-    padding: "0 8px",
-    height: 22,
-    display: "flex",
-    alignItems: "center",
-    cursor: "pointer",
-    fontSize: 12,
-    whiteSpace: "nowrap" as const,
-  },
-};

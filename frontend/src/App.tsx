@@ -11,16 +11,15 @@ import { ChatTabs } from "./components/ChatTabs";
 import RpcLogPanel from "./components/RpcLogPanel";
 import SettingsPane from "./components/SettingsPane";
 import { FolderPicker } from "./components/FolderPicker";
-import { ActivityBar, type ActivityId } from "./components/ActivityBar";
-import { StatusBar } from "./components/StatusBar";
-import { TabBar } from "./components/TabBar";
+import BottomBar, { type ActivityId } from "./components/BottomBar";
+import MosaicLayout from "./components/MosaicLayout";
 import { MenuBar, type MenuGroup } from "./components/MenuBar";
-import TerminalPane from "./components/TerminalPane";
+import * as settings from "./lib/settings";
 import { ws } from "./lib/ws-client";
 import { getFileIcon } from "./lib/file-icons";
+import { globalOpenFile } from "./lib/workspace-context";
 import type { AgentConfig } from "./lib/acp-client";
 import * as acpStore from "./lib/acp-store";
-import * as settings from "./lib/settings";
 
 /** Default fallback if config file fails to load */
 const FALLBACK_AGENT_CONFIG: AgentConfig = {
@@ -53,7 +52,6 @@ export default function App() {
   const [activeActivity, setActiveActivity] = useState<ActivityId>("explorer");
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [_menuOpen, setMenuOpen] = useState<string | null>(null);
-  const [notification, setNotification] = useState<string | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
   const [cursorCol, setCursorCol] = useState(1);
   const [terminalVisible, setTerminalVisible] = useState(false);
@@ -108,6 +106,8 @@ export default function App() {
     savingRef.current = saving;
   }, [saving]);
 
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
   // Connect WebSocket on mount
   useEffect(() => {
     ws.connect()
@@ -116,11 +116,42 @@ export default function App() {
     return () => ws.disconnect();
   }, []);
 
-  // Show notification briefly
-  const notify = useCallback((msg: string) => {
-    setNotification(msg);
-    setTimeout(() => setNotification(null), 2500);
-  }, []);
+  // Load settings after connection
+  useEffect(() => {
+    if (!connected) return;
+    settings.loadSettings().then(() => {
+      setWordWrap(settings.getSettings().editor.wordWrap === "on");
+      setSettingsLoaded(true);
+    });
+    // Subscribe so word wrap updates when settings change
+    return settings.subscribe(() => {
+      setWordWrap(settings.getSettings().editor.wordWrap === "on");
+    });
+  }, [connected]);
+
+  // Auto-open most recent workspace after settings are loaded
+  useEffect(() => {
+    if (!settingsLoaded || workspaceRoot) return;
+    const recent = settings.getSettings().recentlyOpened;
+    if (recent.length > 0) {
+      const path = recent[0];
+      ws.invoke<{ root: string }>("workspace_open", { path })
+        .then(() => {
+          setWorkspaceRoot(path);
+          setOpenFiles(new Map());
+          setActiveFile(null);
+          setDirtyFiles(new Set());
+          setChatSessionVisible(false);
+          setChatSessionMinimized(false);
+          setChatVisible(false);
+          setActiveActivity("explorer");
+        })
+        .catch((e) => {
+          // Workspace path may no longer exist — silently ignore
+          console.warn("Failed to auto-open workspace:", path, e);
+        });
+    }
+  }, [settingsLoaded, workspaceRoot]);
 
   // Save file
   const saveFile = useCallback(
@@ -136,14 +167,13 @@ export default function App() {
           next.delete(path);
           return next;
         });
-        notify(`Saved ${path.split("/").pop()}`);
       } catch (e: any) {
-        notify(`Save failed: ${e.message || e}`);
+        console.error("Save failed:", e);
       } finally {
         setSaving(false);
       }
     },
-    [notify],
+    [],
   );
 
   // Close tab
@@ -276,36 +306,22 @@ export default function App() {
       setOpenFiles(new Map());
       setActiveFile(null);
       setDirtyFiles(new Set());
-      notify(`Opened ${path.split("/").pop()}`);
+      // Track in recently opened
+      await settings.addRecentlyOpened(path);
       // Agent chat stays hidden — spawns only when Ctrl+L or chat icon is clicked
       setChatSessionVisible(false);
       setChatSessionMinimized(false);
       setChatVisible(false);
       setActiveActivity("explorer");
     } catch (e: any) {
-      notify(`Failed to open: ${e.message || e}`);
+      console.error("Failed to open:", e);
     }
   };
 
   const handleFileClick = async (path: string, isDir: boolean) => {
     if (isDir) return;
-    if (openFilesRef.current.has(path)) {
-      setActiveFile(path);
-      return;
-    }
-    try {
-      const result = await ws.invoke<{ content: string }>("read_file", {
-        path,
-      });
-      const content = result.content;
-      const language = getLanguage(path);
-      await ws.invoke("document_open", { path, content });
-      setModelContent(path, content, language);
-      setOpenFiles((prev) => new Map(prev).set(path, { path, language }));
-      setActiveFile(path);
-    } catch (e: any) {
-      notify(`Failed to read: ${e.message || e}`);
-    }
+    // Use the mosaic workspace handler
+    await globalOpenFile(path);
   };
 
   const handleCursorChange = useCallback((line: number, col: number) => {
@@ -410,7 +426,6 @@ export default function App() {
           break;
         case "new_terminal":
           setTerminalVisible(true);
-          notify("Terminal panel");
           break;
         case "extensions":
           setActiveActivity("extensions");
@@ -502,7 +517,7 @@ export default function App() {
         },
         { label: "Terminal", action: "terminal", shortcut: "Ctrl+`" },
         { label: "Extensions", action: "extensions", shortcut: "Ctrl+Shift+X" },
-        { label: "RPC Log", action: "rpc_log", shortcut: "Ctrl+Shift+R" },
+        { label: "ACP Log", action: "rpc_log", shortcut: "Ctrl+Shift+R" },
         { separator: true },
         {
           label: "Toggle Sidebar",
@@ -610,21 +625,6 @@ export default function App() {
       />
 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        <ActivityBar
-          active={activeActivity}
-          onActivate={(id) => {
-            if (id === activeActivity) {
-              // Toggle visibility
-              if (id === "chat") setChatVisible((v) => !v);
-              else setSidebarVisible((v) => !v);
-            } else {
-              setActiveActivity(id);
-              if (id === "chat") setChatVisible(true);
-              else setSidebarVisible(true);
-            }
-          }}
-        />
-
         {/* LEFT PANEL: Chat */}
         {showLeftPanel && (
           <div
@@ -754,179 +754,10 @@ export default function App() {
             </div>
           )}
 
-          {/* Editor area */}
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-            }}
-          >
-            <TabBar
-              openFiles={openFilesList}
-              activePath={activeFile}
-              dirtyFiles={dirtyFiles}
-              onTabClick={setActiveFile}
-              onTabClose={closeTab}
-            />
-
-            {currentFile ? (
-              <EditorPane
-                ref={editorRef}
-                path={currentFile.path}
-                language={currentFile.language}
-                wordWrap={wordWrap}
-                onCursorChange={handleCursorChange}
-                onDirtyChange={handleDirtyChange}
-              />
-            ) : (
-              <div
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 24,
-                  opacity: 0.6,
-                }}
-              >
-                <div
-                  style={{ fontSize: 64, color: COLORS.accent, lineHeight: 1 }}
-                >
-                  ◆
-                </div>
-                <div
-                  style={{
-                    fontSize: 28,
-                    fontWeight: 300,
-                    color: COLORS.textMuted,
-                  }}
-                >
-                  Welcome
-                </div>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <button
-                    style={{
-                      padding: "10px 24px",
-                      background: "transparent",
-                      border: `1px solid ${COLORS.borderLight}`,
-                      borderRadius: 6,
-                      color: COLORS.text,
-                      cursor: "pointer",
-                      fontSize: 13,
-                      fontWeight: 500,
-                    }}
-                    onClick={() => setShowFolderPicker(true)}
-                  >
-                    Open Folder
-                  </button>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8,
-                    fontSize: 12,
-                    color: COLORS.textMuted,
-                  }}
-                >
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    <kbd style={kbdStyle}>Ctrl+O</kbd> Open Folder
-                  </div>
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    <kbd style={kbdStyle}>Ctrl+L</kbd> Agent Chat
-                  </div>
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    <kbd style={kbdStyle}>Ctrl+B</kbd> Toggle Sidebar
-                  </div>
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    <kbd style={kbdStyle}>Ctrl+`</kbd> Toggle Terminal
-                  </div>
-                </div>
-              </div>
-            )}
+          {/* Mosaic layout — replaces editor + terminal */}
+          <div className="flex-1 overflow-hidden">
+            <MosaicLayout workspaceRoot={workspaceRoot} />
           </div>
-
-          {terminalVisible && (
-            <div
-              style={{
-                height: 220,
-                minHeight: 100,
-                borderTop: `1px solid ${COLORS.border}`,
-                display: "flex",
-                flexDirection: "column",
-                flexShrink: 0,
-                background: COLORS.bgDark,
-              }}
-            >
-              <div
-                style={{
-                  height: 30,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "0 12px",
-                  borderBottom: `1px solid ${COLORS.border}`,
-                  flexShrink: 0,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.5,
-                    color: COLORS.textMuted,
-                  }}
-                >
-                  TERMINAL
-                </span>
-                <button
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: COLORS.textMuted,
-                    cursor: "pointer",
-                    fontSize: 18,
-                    lineHeight: 1,
-                    padding: "0 4px",
-                  }}
-                  onClick={() => setTerminalVisible(false)}
-                >
-                  ×
-                </button>
-              </div>
-              <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
-                {workspaceRoot ? (
-                  <TerminalPane workspaceRoot={workspaceRoot} />
-                ) : (
-                  <div
-                    style={{
-                      padding: 16,
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <div style={{ fontSize: 13, opacity: 0.5 }}>
-                      Open a folder first to use the terminal
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* RIGHT PANEL: Explorer */}
@@ -965,7 +796,7 @@ export default function App() {
                 {activeActivity === "search" && "Search"}
                 {activeActivity === "git" && "Source Control"}
                 {activeActivity === "extensions" && "Extensions"}
-                {activeActivity === "rpc" && "RPC Log"}
+                {activeActivity === "rpc" && "ACP Log"}
                 {activeActivity === "settings" && "Settings"}
               </span>
               <button
@@ -1092,7 +923,21 @@ export default function App() {
         )}
       </div>
 
-      <StatusBar
+      <BottomBar
+        active={activeActivity}
+        onActivate={(id) => {
+          if (id === "explorer") {
+            setSidebarVisible((v) => !v);
+            setActiveActivity(id);
+          } else if (id === activeActivity) {
+            // Toggle visibility for chat
+            if (id === "chat") setChatVisible((v) => !v);
+          } else {
+            setActiveActivity(id);
+            if (id === "chat") setChatVisible(true);
+            else setSidebarVisible(true);
+          }
+        }}
         connected={connected}
         saving={saving}
         dirty={currentFile ? dirtyFiles.has(currentFile.path) : false}
@@ -1107,31 +952,12 @@ export default function App() {
 
       {showFolderPicker && (
         <FolderPicker
+          initialPath={settings.getSettings().recentlyOpened[0] || "/home/thomas"}
           onSelect={handleOpenFolder}
           onClose={() => setShowFolderPicker(false)}
         />
       )}
 
-      {notification && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: 32,
-            left: "50%",
-            transform: "translateX(-50%)",
-            padding: "8px 16px",
-            background: COLORS.accent,
-            color: "#0d1f17",
-            borderRadius: 4,
-            fontSize: 12,
-            fontWeight: 600,
-            zIndex: 2000,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-          }}
-        >
-          {notification}
-        </div>
-      )}
     </div>
   );
 }

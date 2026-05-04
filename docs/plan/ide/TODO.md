@@ -248,6 +248,7 @@ So the work  we've done here is really really good. I'm proud of this.
 - make tabs capable of being grabbed and dragged to change order in above tabs and to move to different tab groupings (standard behavior)
 - ![zed free movement of tabs](/home/thomas/src/crow-ai/murder-sidex/murder-ide/docs/plan/ide/zed-screenshot-free-panes-split.png)
 - shit I started putting the preview on the side to make a point about how neat things were and now I'm loving my preview lmfao
+- tsx syntax highlighting not working
 
 
 ### New feature requests

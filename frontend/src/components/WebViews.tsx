@@ -16,59 +16,16 @@ interface WebFetchViewProps {
   content: string;
 }
 
-const COLORS = {
-  border: "#2d2350",
-  bgDark: "#14101f",
-  textPrimary: "#d4c4ff",
-  textMuted: "#8b7bb5",
-  green: "#4ade80",
-};
-
 export function WebFetchView({ url, content }: WebFetchViewProps) {
   return (
-    <div
-      style={{
-        borderRadius: 6,
-        border: `1px solid ${COLORS.border}`,
-        overflow: "hidden",
-        background: COLORS.bgDark,
-        fontSize: 12,
-      }}
-    >
-      <div
-        style={{
-          padding: "4px 10px",
-          borderBottom: `1px solid ${COLORS.border}`,
-          background: COLORS.bgDark,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-        }}
-      >
-        <span style={{ color: COLORS.green, fontSize: 12 }}>🌐</span>
-        <span
-          style={{
-            fontSize: 11,
-            fontFamily: "monospace",
-            color: COLORS.textPrimary,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
+    <div className="rounded-md border border-[var(--color-border)] overflow-hidden bg-[var(--color-background-dark)] text-xs">
+      <div className="px-3 py-1 border-b border-[var(--color-border)] bg-[var(--color-background-dark)] flex items-center gap-1.5">
+        <span className="text-[var(--color-primary)] text-xs">🌐</span>
+        <span className="text-[11px] font-mono text-[var(--color-foreground)] overflow-hidden text-ellipsis whitespace-nowrap">
           {url}
         </span>
       </div>
-      <div
-        style={{
-          padding: 8,
-          maxHeight: 300,
-          overflowY: "auto",
-          fontSize: 12,
-          lineHeight: 1.6,
-          color: COLORS.textPrimary,
-        }}
-      >
+      <div className="p-2 max-h-[300px] overflow-y-auto text-xs leading-relaxed text-[var(--color-foreground)]">
         <Streamdown plugins={{ code, mermaid, math }}>
           {content}
         </Streamdown>
@@ -92,101 +49,30 @@ interface WebSearchViewProps {
 
 export function WebSearchView({ query, results }: WebSearchViewProps) {
   return (
-    <div
-      style={{
-        borderRadius: 6,
-        border: `1px solid ${COLORS.border}`,
-        overflow: "hidden",
-        background: COLORS.bgDark,
-        fontSize: 12,
-      }}
-    >
-      <div
-        style={{
-          padding: "4px 10px",
-          borderBottom: `1px solid ${COLORS.border}`,
-          background: COLORS.bgDark,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-        }}
-      >
-        <span style={{ color: COLORS.green, fontSize: 12 }}>🔍</span>
-        <span style={{ fontSize: 11, color: COLORS.textMuted }}>
-          Search:
-        </span>
-        <span
-          style={{
-            fontSize: 11,
-            color: COLORS.textPrimary,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            fontWeight: 600,
-          }}
-        >
+    <div className="rounded-md border border-[var(--color-border)] overflow-hidden bg-[var(--color-background-dark)] text-xs">
+      <div className="px-3 py-1 border-b border-[var(--color-border)] bg-[var(--color-background-dark)] flex items-center gap-1.5">
+        <span className="text-[var(--color-primary)] text-xs">🔍</span>
+        <span className="text-[11px] text-[var(--color-foreground-muted)]">Search:</span>
+        <span className="text-[11px] text-[var(--color-foreground)] overflow-hidden text-ellipsis whitespace-nowrap font-semibold">
           {query}
         </span>
-        <span
-          style={{
-            marginLeft: "auto",
-            fontSize: 10,
-            color: COLORS.textMuted,
-          }}
-        >
+        <span className="ml-auto text-[10px] text-[var(--color-foreground-muted)]">
           {results.length} results
         </span>
       </div>
-      <div
-        style={{
-          maxHeight: 300,
-          overflowY: "auto",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
+      <div className="max-h-[300px] overflow-y-auto flex flex-col">
         {results.map((result, i) => (
           <div
             key={i}
-            style={{
-              padding: "6px 10px",
-              borderBottom:
-                i < results.length - 1 ? `1px solid ${COLORS.border}33` : "none",
-              cursor: "pointer",
-            }}
+            className="px-3 py-1.5 cursor-pointer"
+            style={{ borderBottom: i < results.length - 1 ? "1px solid var(--color-border)" : "none" }}
             onClick={() => window.open(result.url, "_blank")}
           >
-            <div
-              style={{
-                fontSize: 12,
-                color: "#60a5fa",
-                fontWeight: 500,
-                marginBottom: 2,
-              }}
-            >
-              {result.title}
-            </div>
-            <div
-              style={{
-                fontSize: 10,
-                color: COLORS.textMuted,
-                fontFamily: "monospace",
-                marginBottom: 4,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
+            <div className="text-xs text-[var(--color-blue)] font-medium mb-0.5">{result.title}</div>
+            <div className="text-[10px] text-[var(--color-foreground-muted)] font-mono mb-1 overflow-hidden text-ellipsis whitespace-nowrap">
               {result.url}
             </div>
-            <div
-              style={{
-                fontSize: 11,
-                color: COLORS.textPrimary,
-                lineHeight: 1.4,
-                opacity: 0.8,
-              }}
-            >
+            <div className="text-[11px] text-[var(--color-foreground)] leading-snug opacity-80">
               {result.snippet}
             </div>
           </div>
