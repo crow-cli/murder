@@ -7,6 +7,7 @@ import {
   MosaicNode,
   MosaicWindow,
   MosaicBranch,
+  RemoveButton,
 } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import EditorPane, { setModelContent } from "./EditorPane";
@@ -90,7 +91,8 @@ export function registerTile(id: ViewId, type: TileType) {
   tileRegistry.set(id, {
     meta: { type },
     editorState: type === "editor" ? { files: [], activeIndex: -1 } : undefined,
-    terminalState: type === "terminal" ? { terminals: [], activeIndex: -1 } : undefined,
+    terminalState:
+      type === "terminal" ? { terminals: [], activeIndex: -1 } : undefined,
     pendingFiles: [],
   });
 }
@@ -112,32 +114,28 @@ interface EditorTileProps {
   tileId: ViewId;
   workspaceRoot: string | null;
   onFileClick?: (path: string) => void;
+  /** Called when this tile should be removed from the mosaic (e.g. last file closed). */
+  onRemove?: () => void;
 }
 
 function EditorTile({
   tileId,
   workspaceRoot: _wr,
   onFileClick,
+  onRemove,
 }: EditorTileProps) {
   const [files, setFiles] = useState<{ path: string; language: string }[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const openFileRef = useRef<((path: string) => Promise<void>) | null>(null);
+  const onRemoveRef = useRef(onRemove);
+  useEffect(() => {
+    onRemoveRef.current = onRemove;
+  }, [onRemove]);
 
   useEffect(() => {
     registerTile(tileId, "editor");
-
-    // Check for pending files (set by openFileInTile before tile was mounted)
-    const entry = tileRegistry.get(tileId);
-    if (entry?.pendingFiles && entry.pendingFiles.length > 0) {
-      const pending = [...entry.pendingFiles];
-      entry.pendingFiles = [];
-      // Open pending files after initial render
-      requestAnimationFrame(() => {
-        for (const path of pending) openFile(path);
-      });
-    }
-
     return () => unregisterTile(tileId);
-  }, [tileId, openFile]);
+  }, [tileId]);
 
   useEffect(() => {
     const entry = tileRegistry.get(tileId);
@@ -170,10 +168,29 @@ function EditorTile({
     [files, onFileClick],
   );
 
+  // Keep ref in sync so init effect can use it
+  useEffect(() => {
+    openFileRef.current = openFile;
+  }, [openFile]);
+
+  // Consume pending files on mount (set before tile was created)
+  useEffect(() => {
+    const entry = tileRegistry.get(tileId);
+    if (entry?.pendingFiles && entry.pendingFiles.length > 0) {
+      const pending = [...entry.pendingFiles];
+      entry.pendingFiles = [];
+      for (const path of pending) openFileRef.current?.(path);
+    }
+  }, [tileId]);
+
   const closeFile = useCallback((path: string) => {
     setFiles((prev) => {
       const idx = prev.findIndex((f) => f.path === path);
       const next = prev.filter((f) => f.path !== path);
+      // If this was the last file, remove the entire tile
+      if (next.length === 0) {
+        onRemoveRef.current?.();
+      }
       setActiveIndex((ai) => {
         if (next.length === 0) return -1;
         if (ai === idx) return Math.max(0, next.length - 1);
@@ -263,12 +280,18 @@ function EditorTile({
 interface TerminalTileProps {
   tileId: ViewId;
   workspaceRoot: string | null;
+  /** Called when this tile should be removed from the mosaic (e.g. last terminal closed). */
+  onRemove?: () => void;
 }
 
-function TerminalTile({ tileId, workspaceRoot }: TerminalTileProps) {
+function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
   const [terminals, setTerminals] = useState<string[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const termCounterRef = useRef(0);
+  const onRemoveRef = useRef(onRemove);
+  useEffect(() => {
+    onRemoveRef.current = onRemove;
+  }, [onRemove]);
 
   useEffect(() => {
     registerTile(tileId, "terminal");
@@ -294,6 +317,10 @@ function TerminalTile({ tileId, workspaceRoot }: TerminalTileProps) {
     setTerminals((prev) => {
       const idx = prev.indexOf(id);
       const next = prev.filter((t) => t !== id);
+      // If this was the last terminal, remove the entire tile
+      if (next.length === 0) {
+        onRemoveRef.current?.();
+      }
       setActiveIndex((ai) => {
         if (next.length === 0) return -1;
         if (ai === idx) return Math.max(0, next.length - 1);
@@ -349,17 +376,16 @@ function TerminalTile({ tileId, workspaceRoot }: TerminalTileProps) {
                 <span className="overflow-hidden text-ellipsis whitespace-nowrap max-w-[120px]">
                   Terminal {idx + 1}
                 </span>
-                {terminals.length > 1 && (
-                  <button
-                    className="ml-auto h-5 w-5 p-0 rounded-sm text-[var(--color-active)] hover:text-[var(--color-destructive)] hover:bg-[var(--color-border)] flex items-center justify-center"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTerminal(termId);
-                    }}
-                  >
-                    ×
-                  </button>
-                )}
+                {/* Always show × — clicking it closes the tab, or the tile if it's the last one */}
+                <button
+                  className="ml-auto h-5 w-5 p-0 rounded-sm text-[var(--color-active)] hover:text-[var(--color-destructive)] hover:bg-[var(--color-border)] flex items-center justify-center"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTerminal(termId);
+                  }}
+                >
+                  ×
+                </button>
               </div>
             );
           })}
@@ -399,28 +425,71 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     setGetLayout(() => layout);
   }, [layout]);
 
+  // ── Remove tile from mosaic tree ──────────────────────────────────────────
+  /** Recursively removes a leaf from the mosaic tree. If a parent ends up with
+   *  only one child, the parent is replaced by that child. */
+  const removeFromTree = useCallback(
+    (
+      node: MosaicNode<ViewId> | null,
+      target: ViewId,
+    ): MosaicNode<ViewId> | null => {
+      if (!node) return null;
+      if (typeof node === "string") return node === target ? null : node;
+      const { first, second, direction } = node;
+      const newFirst = removeFromTree(first, target);
+      const newSecond = removeFromTree(second, target);
+      if (newFirst === null && newSecond === null) return null;
+      if (newFirst === null) return newSecond;
+      if (newSecond === null) return newFirst;
+      return { first: newFirst, second: newSecond, direction };
+    },
+    [],
+  );
+
+  const removeTile = useCallback(
+    (viewId: ViewId) => {
+      setLayout((prev) => {
+        const next = removeFromTree(prev, viewId);
+        unregisterTile(viewId);
+        return next;
+      });
+    },
+    [removeFromTree],
+  );
+
+  // Listen for remove-tile events (from toolbar RemoveButton)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { tileId: ViewId };
+      removeTile(detail.tileId);
+    };
+    window.addEventListener("remove-tile", handler);
+    return () => window.removeEventListener("remove-tile", handler);
+  }, [removeTile]);
+
   // ── Global handlers ───────────────────────────────────────────────────────
   const openFileInTile = useCallback(async (path: string) => {
     const language = getLanguage(path);
-    const content = await ws.invoke<{ content: string }>("read_file", { path }).catch(() => ({ content: "" }));
+    const content = await ws
+      .invoke<{ content: string }>("read_file", { path })
+      .catch(() => ({ content: "" }));
     setModelContent(path, content.content, language);
 
     // Find first existing editor tile
     for (const [id, entry] of tileRegistry) {
       if (entry.meta.type === "editor") {
-        // Check if already open in this tile
         const state = entry.editorState;
         if (state && state.files.some((f) => f.path === path)) {
-          // Already open — just switch to it
           state.activeIndex = state.files.findIndex((f) => f.path === path);
           return;
         }
-        // Dispatch event to the existing tile
-        window.dispatchEvent(new CustomEvent("tile-open-file", { detail: { tileId: id, path } }));
+        window.dispatchEvent(
+          new CustomEvent("tile-open-file", { detail: { tileId: id, path } }),
+        );
         return;
       }
     }
-    // No editor tile — create one, store path in pendingFiles
+    // No editor tile — create one
     const id = uid("editor");
     registerTile(id, "editor");
     const entry = tileRegistry.get(id);
@@ -432,7 +501,6 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
   }, []);
 
   const openTerminalInTile = useCallback(() => {
-    // Find first terminal tile
     for (const [id, entry] of tileRegistry) {
       if (entry.meta.type === "terminal") {
         window.dispatchEvent(
@@ -441,7 +509,6 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
         return;
       }
     }
-    // No terminal tile — create one
     const id = uid("terminal");
     registerTile(id, "terminal");
     setLayout((prev) => {
@@ -480,6 +547,16 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     return () => window.removeEventListener("create-editor-tile", handler);
   }, []);
 
+  // ── Toolbar controls ──────────────────────────────────────────────────────
+  const makeToolbar = useCallback(
+    (viewId: ViewId) => (
+      <div className="flex items-center">
+        <RemoveButton />
+      </div>
+    ),
+    [],
+  );
+
   // ── Render tile ───────────────────────────────────────────────────────────
   const renderTile = useCallback(
     (viewId: ViewId, path: MosaicBranch[]) => {
@@ -493,13 +570,21 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
           <MosaicWindow<ViewId>
             path={path}
             title=""
-            toolbarControls={null}
+            toolbarControls={makeToolbar(viewId)}
             className="bg-[var(--color-background-dark)]"
           >
             {type === "editor" ? (
-              <EditorTile tileId={viewId} workspaceRoot={workspaceRoot} />
+              <EditorTile
+                tileId={viewId}
+                workspaceRoot={workspaceRoot}
+                onRemove={() => removeTile(viewId)}
+              />
             ) : (
-              <TerminalTile tileId={viewId} workspaceRoot={workspaceRoot} />
+              <TerminalTile
+                tileId={viewId}
+                workspaceRoot={workspaceRoot}
+                onRemove={() => removeTile(viewId)}
+              />
             )}
           </MosaicWindow>
         );
@@ -509,18 +594,26 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
         <MosaicWindow<ViewId>
           path={path}
           title=""
-          toolbarControls={null}
+          toolbarControls={makeToolbar(viewId)}
           className="bg-[var(--color-background-dark)]"
         >
           {entry.meta.type === "editor" ? (
-            <EditorTile tileId={viewId} workspaceRoot={workspaceRoot} />
+            <EditorTile
+              tileId={viewId}
+              workspaceRoot={workspaceRoot}
+              onRemove={() => removeTile(viewId)}
+            />
           ) : (
-            <TerminalTile tileId={viewId} workspaceRoot={workspaceRoot} />
+            <TerminalTile
+              tileId={viewId}
+              workspaceRoot={workspaceRoot}
+              onRemove={() => removeTile(viewId)}
+            />
           )}
         </MosaicWindow>
       );
     },
-    [workspaceRoot],
+    [workspaceRoot, removeTile, makeToolbar],
   );
 
   return (
