@@ -1,14 +1,8 @@
-/** Mosaic layout with typed tiles — each tile is a tabbed container */
+/** Mosaic layout with typed tiles — backend-persisted via SQLite */
 import { useState, useCallback, useEffect, useRef } from "react";
-import { DndProvider } from "react-dnd";
+import { DndProvider, useDrag, useDrop } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
-import {
-  Mosaic,
-  MosaicNode,
-  MosaicWindow,
-  MosaicBranch,
-  RemoveButton,
-} from "react-mosaic-component";
+import { Mosaic, MosaicNode, MosaicBranch } from "react-mosaic-component";
 import "react-mosaic-component/react-mosaic-component.css";
 import EditorPane, { setModelContent } from "./EditorPane";
 import TerminalPane from "./TerminalPane";
@@ -19,6 +13,7 @@ import {
   setGetLayout,
 } from "../lib/workspace-context";
 import { FileIcon } from "../lib/file-icons";
+import * as settings from "../lib/settings";
 
 // ── Tile metadata registry ───────────────────────────────────────────────────
 export type TileType = "editor" | "terminal";
@@ -49,12 +44,47 @@ const tileRegistry = new Map<
     meta: TileMeta;
     editorState?: EditorTileState;
     terminalState?: TerminalTileState;
-    pendingFiles?: string[]; // files to open once tile mounts
+    pendingFiles?: string[];
   }
 >();
 
 /** Set of minimized (hidden) tile IDs */
 const minimizedTiles = new Set<ViewId>();
+
+/** Track the last-active tile for each type — new files go here */
+const lastActiveTile = new Map<TileType, ViewId>();
+
+// Debounced save to backend
+let layoutSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+let tileStateSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function debounceSaveLayout(workspace: string, layoutJson: string) {
+  if (layoutSaveTimeout) clearTimeout(layoutSaveTimeout);
+  layoutSaveTimeout = setTimeout(() => {
+    ws.invoke("save_mosaic_layout", { workspace, layout: layoutJson }).catch(
+      console.error,
+    );
+  }, 300);
+}
+
+function debounceSaveTileState(
+  workspace: string,
+  tileId: string,
+  tileType: string,
+  stateJson: string,
+  isMinimized: boolean,
+) {
+  if (tileStateSaveTimeout) clearTimeout(tileStateSaveTimeout);
+  tileStateSaveTimeout = setTimeout(() => {
+    ws.invoke("save_tile_state", {
+      workspace,
+      tileId,
+      tileType,
+      state: stateJson,
+      isMinimized,
+    }).catch(console.error);
+  }, 300);
+}
 
 // ── Utility: generate unique tile ID ──────────────────────────────────────────
 let tileCounter = 0;
@@ -101,8 +131,6 @@ export function registerTile(id: ViewId, type: TileType) {
 }
 
 export function unregisterTile(id: ViewId) {
-  // If the tile is minimized, don't actually unregister — just return.
-  // The tile will be restored from the registry when toggled back.
   if (minimizedTiles.has(id)) return;
   tileRegistry.delete(id);
 }
@@ -113,6 +141,15 @@ export function getEditorState(id: ViewId): EditorTileState | null {
 
 export function getTerminalState(id: ViewId): TerminalTileState | null {
   return tileRegistry.get(id)?.terminalState ?? null;
+}
+
+/** Global accessor for current workspace (set by MosaicLayout). */
+let currentWorkspace: string | null = null;
+export function setCurrentWorkspace(ws: string | null) {
+  currentWorkspace = ws;
+}
+export function getCurrentWorkspace(): string | null {
+  return currentWorkspace;
 }
 
 // ── Expose tile count helpers ─────────────────────────────────────────────────
@@ -133,13 +170,140 @@ export function getMinimizedTileCount(type: TileType): number {
   return count;
 }
 
+// ── Context Menu ──────────────────────────────────────────────────────────────
+interface ContextMenuState {
+  x: number;
+  y: number;
+  tileId: ViewId;
+  tileType: TileType;
+  tabPath?: string; // for tab-level context menu
+  onClose: () => void;
+}
+
+function ContextMenu({
+  x,
+  y,
+  tileId,
+  tileType,
+  tabPath,
+  onClose,
+}: ContextMenuState) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [onClose]);
+
+  const handleAction = (action: string) => {
+    onClose();
+    switch (action) {
+      case "split-left":
+        window.dispatchEvent(
+          new CustomEvent("split-tile", {
+            detail: { tileId, direction: "left" },
+          }),
+        );
+        break;
+      case "split-right":
+        window.dispatchEvent(
+          new CustomEvent("split-tile", {
+            detail: { tileId, direction: "right" },
+          }),
+        );
+        break;
+      case "split-up":
+        window.dispatchEvent(
+          new CustomEvent("split-tile", {
+            detail: { tileId, direction: "up" },
+          }),
+        );
+        break;
+      case "split-down":
+        window.dispatchEvent(
+          new CustomEvent("split-tile", {
+            detail: { tileId, direction: "down" },
+          }),
+        );
+        break;
+      case "close-tile":
+        window.dispatchEvent(
+          new CustomEvent("remove-tile", { detail: { tileId } }),
+        );
+        break;
+      case "close-tab":
+        if (tabPath) {
+          window.dispatchEvent(
+            new CustomEvent("editor-close-tab", { detail: { path: tabPath } }),
+          );
+        }
+        break;
+    }
+  };
+
+  return (
+    <div ref={menuRef} className="context-menu" style={{ left: x, top: y }}>
+      <button
+        className="context-menu-item"
+        onClick={() => handleAction("split-right")}
+      >
+        <span>Split Right</span>
+        <span className="shortcut">⊞→</span>
+      </button>
+      <button
+        className="context-menu-item"
+        onClick={() => handleAction("split-left")}
+      >
+        <span>Split Left</span>
+        <span className="shortcut">⊞←</span>
+      </button>
+      <button
+        className="context-menu-item"
+        onClick={() => handleAction("split-down")}
+      >
+        <span>Split Down</span>
+        <span className="shortcut">⊞↓</span>
+      </button>
+      <button
+        className="context-menu-item"
+        onClick={() => handleAction("split-up")}
+      >
+        <span>Split Up</span>
+        <span className="shortcut">↑</span>
+      </button>
+      <div className="context-menu-separator" />
+      <button
+        className="context-menu-item danger"
+        onClick={() => handleAction("close-tile")}
+      >
+        <span>Close Pane</span>
+        <span className="shortcut">✕</span>
+      </button>
+    </div>
+  );
+}
+
 // ── EditorTile: tabbed file container ─────────────────────────────────────────
 interface EditorTileProps {
   tileId: ViewId;
   workspaceRoot: string | null;
   onFileClick?: (path: string) => void;
-  /** Called when this tile should be removed from the mosaic (e.g. last file closed). */
   onRemove?: () => void;
+  wordWrap?: boolean;
+  /** Called when this tile gains focus (for tracking last-active) */
+  onFocus?: () => void;
+  /** Register a drop handler for this tile */
+  onRegisterDrop?: (
+    tileId: ViewId,
+    type: TileType,
+    handler: (path: string) => void,
+  ) => void;
+  onUnregisterDrop?: (tileId: ViewId) => void;
 }
 
 function EditorTile({
@@ -147,24 +311,29 @@ function EditorTile({
   workspaceRoot: _wr,
   onFileClick,
   onRemove,
+  wordWrap,
+  onFocus,
+  onRegisterDrop,
+  onUnregisterDrop,
 }: EditorTileProps) {
-  // Restore state from registry if available (from previous mount before minimize)
   const registryEntry = tileRegistry.get(tileId);
   const savedState = registryEntry?.editorState;
   const [files, setFiles] = useState<{ path: string; language: string }[]>(
-    savedState?.files ?? []
+    savedState?.files ?? [],
   );
-  const [activeIndex, setActiveIndex] = useState(
-    savedState?.activeIndex ?? -1
-  );
+  const [activeIndex, setActiveIndex] = useState(savedState?.activeIndex ?? -1);
   const openFileRef = useRef<((path: string) => Promise<void>) | null>(null);
   const onRemoveRef = useRef(onRemove);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
   useEffect(() => {
     onRemoveRef.current = onRemove;
   }, [onRemove]);
 
   useEffect(() => {
     registerTile(tileId, "editor");
+    lastActiveTile.set("editor", tileId);
+    onFocus?.();
     return () => unregisterTile(tileId);
   }, [tileId]);
 
@@ -173,6 +342,16 @@ function EditorTile({
     if (entry?.editorState) {
       entry.editorState.files = files;
       entry.editorState.activeIndex = activeIndex;
+      const ws = getCurrentWorkspace();
+      if (ws && files.length > 0) {
+        debounceSaveTileState(
+          ws,
+          tileId,
+          "editor",
+          JSON.stringify({ files, activeIndex }),
+          false,
+        );
+      }
     }
   }, [files, activeIndex, tileId]);
 
@@ -199,12 +378,10 @@ function EditorTile({
     [files, onFileClick],
   );
 
-  // Keep ref in sync so init effect can use it
   useEffect(() => {
     openFileRef.current = openFile;
   }, [openFile]);
 
-  // Consume pending files on mount (set before tile was created)
   useEffect(() => {
     const entry = tileRegistry.get(tileId);
     if (entry?.pendingFiles && entry.pendingFiles.length > 0) {
@@ -218,7 +395,6 @@ function EditorTile({
     setFiles((prev) => {
       const idx = prev.findIndex((f) => f.path === path);
       const next = prev.filter((f) => f.path !== path);
-      // If this was the last file, remove the entire tile
       if (next.length === 0) {
         onRemoveRef.current?.();
       }
@@ -232,7 +408,6 @@ function EditorTile({
     });
   }, []);
 
-  // Listen for tile-open-file events
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as {
@@ -245,47 +420,104 @@ function EditorTile({
     return () => window.removeEventListener("tile-open-file", handler);
   }, [tileId, openFile]);
 
+  // Register drop handler for drag-and-drop from other panes
+  useEffect(() => {
+    onRegisterDrop?.(tileId, "editor", openFile);
+    return () => onUnregisterDrop?.(tileId);
+  }, [tileId, openFile, onRegisterDrop, onUnregisterDrop]);
+
+  // ─ Tab drag source ───────────────────────────────────────────
+  function DraggableTab({
+    file,
+    idx,
+    isActive,
+  }: {
+    file: { path: string; language: string };
+    idx: number;
+    isActive: boolean;
+  }) {
+    const [{ isDragging }, drag] = useDrag({
+      type: "FILE_TAB",
+      item: { path: file.path, language: file.language, sourceTileId: tileId },
+      collect: (monitor) => ({ isDragging: monitor.isDragging() }),
+    });
+
+    return (
+      <div
+        ref={drag}
+        className="flex items-center gap-1.5 px-3 text-[13px] cursor-pointer select-none border-r border-[var(--color-border)] min-w-0 relative transition-colors"
+        style={{
+          backgroundColor: isActive ? "var(--color-card)" : "transparent",
+          color: isActive
+            ? "var(--color-foreground)"
+            : "var(--color-foreground-dim)",
+          opacity: isDragging ? 0.4 : 1,
+        }}
+        onClick={() => setActiveIndex(idx)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            tileId,
+            tileType: "editor",
+            tabPath: file.path,
+            onClose: () => setContextMenu(null),
+          });
+        }}
+      >
+        {isActive && (
+          <div className="absolute top-0 left-0 right-0 h-[1px] bg-[var(--color-primary)]" />
+        )}
+        <FileIcon name={file.path} size={12} />
+        <span className="overflow-hidden text-ellipsis whitespace-nowrap max-w-[150px]">
+          {file.path.split("/").pop()}
+        </span>
+        <button
+          className="ml-auto h-5 w-5 p-0 rounded-sm text-[var(--color-active)] hover:text-[var(--color-destructive)] hover:bg-[var(--color-border)] flex items-center justify-center"
+          onClick={(e) => {
+            e.stopPropagation();
+            closeFile(file.path);
+          }}
+        >
+          ×
+        </button>
+      </div>
+    );
+  }
+
   const activeFile = activeIndex >= 0 ? files[activeIndex] : null;
 
   return (
-    <div className="flex flex-col h-full bg-[var(--color-background-dark)]">
+    <div
+      className="flex flex-col h-full bg-[var(--color-background-dark)]"
+      onClick={() => {
+        onFocus?.();
+        lastActiveTile.set("editor", tileId);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          tileId,
+          tileType: "editor",
+          onClose: () => setContextMenu(null),
+        });
+      }}
+    >
       {files.length > 0 && (
         <div className="flex bg-[var(--color-background)] border-b border-[var(--color-border)] overflow-x-auto shrink-0 h-[35px]">
-          {files.map((file, idx) => {
-            const isActive = idx === activeIndex;
-            return (
-              <div
-                key={file.path}
-                className="flex items-center gap-1.5 px-3 text-[13px] cursor-pointer select-none border-r border-[var(--color-border)] min-w-0 relative transition-colors"
-                style={{
-                  backgroundColor: isActive
-                    ? "var(--color-card)"
-                    : "transparent",
-                  color: isActive
-                    ? "var(--color-foreground)"
-                    : "var(--color-foreground-dim)",
-                }}
-                onClick={() => setActiveIndex(idx)}
-              >
-                {isActive && (
-                  <div className="absolute top-0 left-0 right-0 h-[1px] bg-[var(--color-primary)]" />
-                )}
-                <FileIcon name={file.path} size={12} />
-                <span className="overflow-hidden text-ellipsis whitespace-nowrap max-w-[150px]">
-                  {file.path.split("/").pop()}
-                </span>
-                <button
-                  className="ml-auto h-5 w-5 p-0 rounded-sm text-[var(--color-active)] hover:text-[var(--color-destructive)] hover:bg-[var(--color-border)] flex items-center justify-center"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeFile(file.path);
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })}
+          {files.map((file, idx) => (
+            <DraggableTab
+              key={file.path}
+              file={file}
+              idx={idx}
+              isActive={idx === activeIndex}
+            />
+          ))}
         </div>
       )}
       <div className="relative flex-1 min-h-0 overflow-hidden">
@@ -300,9 +532,11 @@ function EditorTile({
             path={activeFile.path}
             language={activeFile.language}
             isActive
+            wordWrap={wordWrap}
           />
         )}
       </div>
+      {contextMenu && <ContextMenu {...contextMenu} />}
     </div>
   );
 }
@@ -311,28 +545,40 @@ function EditorTile({
 interface TerminalTileProps {
   tileId: ViewId;
   workspaceRoot: string | null;
-  /** Called when this tile should be removed from the mosaic (e.g. last terminal closed). */
   onRemove?: () => void;
+  onFocus?: () => void;
+  onRegisterDrop?: (
+    tileId: ViewId,
+    type: TileType,
+    handler: (path: string) => void,
+  ) => void;
+  onUnregisterDrop?: (tileId: ViewId) => void;
 }
 
-function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
-  // Restore state from registry if available (from previous mount before minimize)
+function TerminalTile({
+  tileId,
+  workspaceRoot,
+  onRemove,
+  onFocus,
+}: TerminalTileProps) {
   const registryEntry = tileRegistry.get(tileId);
   const savedState = registryEntry?.terminalState;
   const [terminals, setTerminals] = useState<string[]>(
-    savedState?.terminals ?? []
+    savedState?.terminals ?? [],
   );
-  const [activeIndex, setActiveIndex] = useState(
-    savedState?.activeIndex ?? -1
-  );
+  const [activeIndex, setActiveIndex] = useState(savedState?.activeIndex ?? -1);
   const termCounterRef = useRef(0);
   const onRemoveRef = useRef(onRemove);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
   useEffect(() => {
     onRemoveRef.current = onRemove;
   }, [onRemove]);
 
   useEffect(() => {
     registerTile(tileId, "terminal");
+    lastActiveTile.set("terminal", tileId);
+    onFocus?.();
     return () => unregisterTile(tileId);
   }, [tileId]);
 
@@ -341,6 +587,16 @@ function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
     if (entry?.terminalState) {
       entry.terminalState.terminals = terminals;
       entry.terminalState.activeIndex = activeIndex;
+      const ws = getCurrentWorkspace();
+      if (ws && terminals.length > 0) {
+        debounceSaveTileState(
+          ws,
+          tileId,
+          "terminal",
+          JSON.stringify({ terminals, activeIndex }),
+          false,
+        );
+      }
     }
   }, [terminals, activeIndex, tileId]);
 
@@ -355,7 +611,6 @@ function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
     setTerminals((prev) => {
       const idx = prev.indexOf(id);
       const next = prev.filter((t) => t !== id);
-      // If this was the last terminal, remove the entire tile
       if (next.length === 0) {
         onRemoveRef.current?.();
       }
@@ -369,7 +624,6 @@ function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
     });
   }, []);
 
-  // Listen for tile-add-terminal events
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as { tileId: string };
@@ -379,7 +633,7 @@ function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
     return () => window.removeEventListener("tile-add-terminal", handler);
   }, [tileId, addTerminal]);
 
-  // Auto-create first terminal on mount
+  // Auto-create first terminal on mount (only if no terminals restored from state)
   useEffect(() => {
     if (terminals.length === 0) addTerminal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -388,7 +642,24 @@ function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
   const activeTerm = activeIndex >= 0 ? terminals[activeIndex] : null;
 
   return (
-    <div className="flex flex-col h-full bg-[var(--color-background-dark)]">
+    <div
+      className="flex flex-col h-full bg-[var(--color-background-dark)]"
+      onClick={() => {
+        onFocus?.();
+        lastActiveTile.set("terminal", tileId);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          tileId,
+          tileType: "terminal",
+          onClose: () => setContextMenu(null),
+        });
+      }}
+    >
       {terminals.length > 0 && (
         <div className="flex bg-[var(--color-background)] border-b border-[var(--color-border)] overflow-x-auto shrink-0 h-[35px]">
           {terminals.map((termId, idx) => {
@@ -406,6 +677,17 @@ function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
                     : "var(--color-foreground-dim)",
                 }}
                 onClick={() => setActiveIndex(idx)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setContextMenu({
+                    x: e.clientX,
+                    y: e.clientY,
+                    tileId,
+                    tileType: "terminal",
+                    onClose: () => setContextMenu(null),
+                  });
+                }}
               >
                 {isActive && (
                   <div className="absolute top-0 left-0 right-0 h-[1px] bg-[var(--color-primary)]" />
@@ -436,37 +718,84 @@ function TerminalTile({ tileId, workspaceRoot, onRemove }: TerminalTileProps) {
         </div>
       )}
       <div className="relative flex-1 min-h-0 overflow-hidden">
-        {activeTerm && workspaceRoot ? (
-          <TerminalPane workspaceRoot={workspaceRoot} />
-        ) : (
+        {/* Render ALL terminals, hide inactive ones — each gets its own PTY */}
+        {terminals.map((termId, idx) => (
+          <div
+            key={termId}
+            className="absolute inset-0"
+            style={{ display: idx === activeIndex ? "block" : "none" }}
+          >
+            {workspaceRoot && (
+              <TerminalPane
+                key={termId}
+                workspaceRoot={workspaceRoot}
+                terminalId={termId}
+              />
+            )}
+          </div>
+        ))}
+        {terminals.length === 0 && workspaceRoot && (
           <div className="flex items-center justify-center h-full text-[var(--color-foreground-dim)] text-sm">
-            {workspaceRoot
-              ? "No terminal"
-              : "Open a folder to use the terminal"}
+            No terminal
+          </div>
+        )}
+        {terminals.length === 0 && !workspaceRoot && (
+          <div className="flex items-center justify-center h-full text-[var(--color-foreground-dim)] text-sm">
+            Open a folder to use the terminal
           </div>
         )}
       </div>
+      {contextMenu && <ContextMenu {...contextMenu} />}
     </div>
   );
 }
 
-// ── MosaicLayout ──────────────────────────────────────────────────────────────
+// ─ MosaicLayout ──────────────────────────────────────────────────────────────
 interface MosaicLayoutProps {
   workspaceRoot: string | null;
 }
 
 export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
   const [layout, setLayout] = useState<MosaicNode<ViewId> | null>(null);
-  // Track which tiles are minimized (unmounted from tree)
   const [minimizedState, setMinimizedState] = useState<Set<ViewId>>(new Set());
+  const [wordWrap, setWordWrap] = useState(
+    settings.getSettings().editor.wordWrap === "on",
+  );
+  const workspaceRef = useRef(workspaceRoot);
+  const dropHandlersRef = useRef(new Map<ViewId, (path: string) => void>());
+  const dropTileTypesRef = useRef(new Map<ViewId, TileType>());
+
+  // Subscribe to settings changes for word wrap
+  useEffect(() => {
+    return settings.subscribe(() => {
+      setWordWrap(settings.getSettings().editor.wordWrap === "on");
+    });
+  }, []);
+
+  useEffect(() => {
+    workspaceRef.current = workspaceRoot;
+    setCurrentWorkspace(workspaceRoot);
+  }, [workspaceRoot]);
 
   useEffect(() => {
     setGetLayout(() => layout);
   }, [layout]);
 
+  // ── Drop handler registration ─────────────────────────────────────────────
+  const registerDrop = useCallback(
+    (tileId: ViewId, type: TileType, handler: (path: string) => void) => {
+      dropHandlersRef.current.set(tileId, handler);
+      dropTileTypesRef.current.set(tileId, type);
+    },
+    [],
+  );
+
+  const unregisterDrop = useCallback((tileId: ViewId) => {
+    dropHandlersRef.current.delete(tileId);
+    dropTileTypesRef.current.delete(tileId);
+  }, []);
+
   // ── Remove tile from mosaic tree ──────────────────────────────────────────
-  /** Recursively removes a leaf from the mosaic tree. If a parent ends up with
-   *  only one child, the parent is replaced by that child. */
   const removeFromTree = useCallback(
     (
       node: MosaicNode<ViewId> | null,
@@ -487,16 +816,29 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
 
   const removeTile = useCallback(
     (viewId: ViewId) => {
+      const currentWs = workspaceRef.current;
+      dropHandlersRef.current.delete(viewId);
+      dropTileTypesRef.current.delete(viewId);
       setLayout((prev) => {
         const next = removeFromTree(prev, viewId);
         unregisterTile(viewId);
+        if (currentWs) {
+          ws.invoke("delete_tile_state", {
+            workspace: currentWs,
+            tileId: viewId,
+          }).catch(console.error);
+          if (next) {
+            debounceSaveLayout(currentWs, JSON.stringify(next));
+          } else {
+            debounceSaveLayout(currentWs, "null");
+          }
+        }
         return next;
       });
     },
     [removeFromTree],
   );
 
-  // Listen for remove-tile events (from toolbar RemoveButton)
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as { tileId: ViewId };
@@ -506,22 +848,116 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     return () => window.removeEventListener("remove-tile", handler);
   }, [removeTile]);
 
-  // ── Minimize / Restore ────────────────────────────────────────────────────
-  /** Minimize all tiles of a given type — removes them from the mosaic tree. */
-  const minimizeTiles = useCallback((type: TileType) => {
-    const toMinimize = new Set<ViewId>();
-    for (const [id, entry] of tileRegistry) {
-      if (entry.meta.type === type && !minimizedTiles.has(id)) {
-        toMinimize.add(id);
-        minimizedTiles.add(id);
-      }
-    }
-    if (toMinimize.size === 0) return;
+  // ── Split tile on right-click ─────────────────────────────────────────────
+  const splitTile = useCallback(
+    (sourceTileId: ViewId, direction: "left" | "right" | "up" | "down") => {
+      const entry = tileRegistry.get(sourceTileId);
+      const type = entry?.meta.type ?? "editor";
+      const newId = uid(type);
+      registerTile(newId, type);
+      lastActiveTile.set(type, newId);
 
+      const currentWs = workspaceRef.current;
+      setLayout((prev) => {
+        if (!prev) return newId;
+
+        // Find the source tile and split it
+        const splitNode = (node: MosaicNode<ViewId>): MosaicNode<ViewId> => {
+          if (typeof node === "string") {
+            return node === sourceTileId
+              ? {
+                  first: node,
+                  second: newId,
+                  direction:
+                    direction === "left" || direction === "right"
+                      ? "row"
+                      : "column",
+                }
+              : node;
+          }
+          const { first, second, direction: dir } = node;
+          if (
+            dir ===
+            (direction === "left" || direction === "right" ? "row" : "column")
+          ) {
+            // Same direction — add to the end
+            if (typeof second === "string") {
+              if (second === sourceTileId) {
+                return {
+                  first,
+                  second: { first: second, second: newId, direction: dir },
+                  direction: dir,
+                };
+              }
+            }
+          }
+          const newFirst = splitNode(first);
+          const newSecond = splitNode(second);
+          return { first: newFirst, second: newSecond, direction: dir };
+        };
+
+        const next = splitNode(prev);
+        if (currentWs) {
+          debounceSaveTileState(currentWs, newId, type, "{}", false);
+          debounceSaveLayout(currentWs, JSON.stringify(next));
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        tileId: ViewId;
+        direction: string;
+      };
+      splitTile(
+        detail.tileId,
+        detail.direction as "left" | "right" | "up" | "down",
+      );
+    };
+    window.addEventListener("split-tile", handler);
+    return () => window.removeEventListener("split-tile", handler);
+  }, [splitTile]);
+
+  // ─ Minimize / Restore ────────────────────────────────────────────────────
+  const minimizeTiles = useCallback(
+    (type: TileType) => {
+      const toMinimize = new Set<ViewId>();
+      for (const [id, entry] of tileRegistry) {
+        if (entry.meta.type === type && !minimizedTiles.has(id)) {
+          toMinimize.add(id);
+          minimizedTiles.add(id);
+        }
+      }
+      if (toMinimize.size === 0) return;
+
+      const currentWs = workspaceRef.current;
       setLayout((prev) => {
         let result = prev;
         for (const id of toMinimize) {
           result = removeFromTree(result, id);
+        }
+        if (currentWs) {
+          for (const id of toMinimize) {
+            const entry = tileRegistry.get(id);
+            if (entry) {
+              const stateJson = JSON.stringify(
+                entry.editorState ?? entry.terminalState ?? {},
+              );
+              debounceSaveTileState(
+                currentWs,
+                id,
+                entry.meta.type,
+                stateJson,
+                true,
+              );
+            }
+          }
+          if (result) debounceSaveLayout(currentWs, JSON.stringify(result));
+          else debounceSaveLayout(currentWs, "null");
         }
         return result;
       });
@@ -534,20 +970,16 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     [removeFromTree],
   );
 
-  /** Restore minimized tiles of a given type — re-add them to the mosaic tree. */
   const restoreTiles = useCallback((type: TileType) => {
     const toRestore: ViewId[] = [];
     for (const id of minimizedTiles) {
       const entry = tileRegistry.get(id);
-      if (entry?.meta.type === type) {
-        toRestore.push(id);
-      }
+      if (entry?.meta.type === type) toRestore.push(id);
     }
     if (toRestore.length === 0) return;
 
-    for (const id of toRestore) {
-      minimizedTiles.delete(id);
-    }
+    const currentWs = workspaceRef.current;
+    for (const id of toRestore) minimizedTiles.delete(id);
     setMinimizedState((prev) => {
       const next = new Set(prev);
       for (const id of toRestore) next.delete(id);
@@ -557,32 +989,43 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     setLayout((prev) => {
       let result = prev;
       for (const id of toRestore) {
-        if (!result) {
-          result = id;
-        } else {
-          result = addToLastLeaf(result, id);
+        if (!result) result = id;
+        else result = addToLastLeaf(result, id);
+      }
+      if (currentWs) {
+        for (const id of toRestore) {
+          const entry = tileRegistry.get(id);
+          if (entry) {
+            const stateJson = JSON.stringify(
+              entry.editorState ?? entry.terminalState ?? {},
+            );
+            debounceSaveTileState(
+              currentWs,
+              id,
+              entry.meta.type,
+              stateJson,
+              false,
+            );
+          }
         }
+        if (result) debounceSaveLayout(currentWs, JSON.stringify(result));
+        else debounceSaveLayout(currentWs, "null");
       }
       return result;
     });
   }, []);
 
-  /** Toggle minimize/restore for a tile type. */
   const toggleTiles = useCallback(
     (type: TileType) => {
       const anyMinimized = [...tileRegistry].some(
         ([id, entry]) => entry.meta.type === type && minimizedTiles.has(id),
       );
-      if (anyMinimized) {
-        restoreTiles(type);
-      } else {
-        minimizeTiles(type);
-      }
+      if (anyMinimized) restoreTiles(type);
+      else minimizeTiles(type);
     },
     [minimizeTiles, restoreTiles],
   );
 
-  // Expose toggle functions globally
   useEffect(() => {
     const handlers = {
       "toggle-minimize-editors": () => toggleTiles("editor"),
@@ -601,7 +1044,6 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     };
   }, [toggleTiles]);
 
-  // Expose toggle functions via custom accessors
   useEffect(() => {
     (window as any).__toggleEditors = () => toggleTiles("editor");
     (window as any).__toggleTerminals = () => toggleTiles("terminal");
@@ -611,6 +1053,70 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     };
   }, [toggleTiles]);
 
+  // ── Load state from backend on workspace change ───────────────────────────
+  useEffect(() => {
+    if (!workspaceRoot) return;
+    tileRegistry.clear();
+    minimizedTiles.clear();
+    lastActiveTile.clear();
+    setLayout(null);
+    setMinimizedState(new Set());
+
+    Promise.all([
+      ws.invoke<{ layout: string | null }>("get_mosaic_layout", {
+        workspace: workspaceRoot,
+      }),
+      ws.invoke<{
+        tiles: Array<{
+          tileId: string;
+          tileType: string;
+          state: string;
+          isMinimized: boolean;
+        }>;
+      }>("get_tile_states", { workspace: workspaceRoot }),
+    ])
+      .then(([layoutResult, tileResult]) => {
+        for (const tile of tileResult.tiles) {
+          registerTile(tile.tileId, tile.tileType as TileType);
+          const entry = tileRegistry.get(tile.tileId);
+          if (entry) {
+            try {
+              const parsed = JSON.parse(tile.state);
+              if (tile.tileType === "editor" && parsed.files) {
+                entry.editorState = {
+                  files: parsed.files,
+                  activeIndex: parsed.activeIndex ?? -1,
+                };
+                for (const f of parsed.files) {
+                  setModelContent(f.path, "", f.language);
+                }
+                lastActiveTile.set("editor", tile.tileId);
+              } else if (tile.tileType === "terminal" && parsed.terminals) {
+                entry.terminalState = {
+                  terminals: parsed.terminals,
+                  activeIndex: parsed.activeIndex ?? -1,
+                };
+                lastActiveTile.set("terminal", tile.tileId);
+              }
+            } catch {
+              // Invalid state JSON — use defaults
+            }
+          }
+          if (tile.isMinimized) minimizedTiles.add(tile.tileId);
+        }
+
+        if (layoutResult.layout) {
+          try {
+            const parsed = JSON.parse(layoutResult.layout);
+            if (parsed) setLayout(parsed);
+          } catch {
+            // Invalid layout JSON — start fresh
+          }
+        }
+      })
+      .catch(console.error);
+  }, [workspaceRoot]);
+
   // ── Global handlers ───────────────────────────────────────────────────────
   const openFileInTile = useCallback(async (path: string) => {
     const language = getLanguage(path);
@@ -619,7 +1125,22 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
       .catch(() => ({ content: "" }));
     setModelContent(path, content.content, language);
 
-    // Find first existing non-minimized editor tile
+    // Open in LAST ACTIVE tile, not first
+    const lastId = lastActiveTile.get("editor");
+    if (lastId && !minimizedTiles.has(lastId)) {
+      const entry = tileRegistry.get(lastId);
+      const state = entry?.editorState;
+      if (state && state.files.some((f) => f.path === path)) {
+        state.activeIndex = state.files.findIndex((f) => f.path === path);
+        return;
+      }
+      window.dispatchEvent(
+        new CustomEvent("tile-open-file", { detail: { tileId: lastId, path } }),
+      );
+      return;
+    }
+
+    // Fallback: find any visible editor tile
     for (const [id, entry] of tileRegistry) {
       if (entry.meta.type === "editor" && !minimizedTiles.has(id)) {
         const state = entry.editorState;
@@ -633,18 +1154,33 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
         return;
       }
     }
+
     // No visible editor tile — create one
     const id = uid("editor");
     registerTile(id, "editor");
+    lastActiveTile.set("editor", id);
     const entry = tileRegistry.get(id);
     if (entry?.pendingFiles) entry.pendingFiles.push(path);
+    const currentWs = workspaceRef.current;
     setLayout((prev) => {
-      if (!prev) return id;
-      return addToLastLeaf(prev, id);
+      let next: MosaicNode<ViewId>;
+      if (!prev) next = id;
+      else next = addToLastLeaf(prev, id);
+      if (currentWs) debounceSaveLayout(currentWs, JSON.stringify(next));
+      return next;
     });
   }, []);
 
   const openTerminalInTile = useCallback(() => {
+    // Open in LAST ACTIVE terminal tile
+    const lastId = lastActiveTile.get("terminal");
+    if (lastId && !minimizedTiles.has(lastId)) {
+      window.dispatchEvent(
+        new CustomEvent("tile-add-terminal", { detail: { tileId: lastId } }),
+      );
+      return;
+    }
+
     for (const [id, entry] of tileRegistry) {
       if (entry.meta.type === "terminal" && !minimizedTiles.has(id)) {
         window.dispatchEvent(
@@ -655,9 +1191,14 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     }
     const id = uid("terminal");
     registerTile(id, "terminal");
+    lastActiveTile.set("terminal", id);
+    const currentWs = workspaceRef.current;
     setLayout((prev) => {
-      if (!prev) return id;
-      return addToLastLeaf(prev, id);
+      let next: MosaicNode<ViewId>;
+      if (!prev) next = id;
+      else next = addToLastLeaf(prev, id);
+      if (currentWs) debounceSaveLayout(currentWs, JSON.stringify(next));
+      return next;
     });
   }, []);
 
@@ -666,7 +1207,6 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     setGlobalOpenTerminal(openTerminalInTile);
   }, [openFileInTile, openTerminalInTile]);
 
-  // Listen for create-editor-tile events
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as {
@@ -675,9 +1215,14 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
       };
       const id = uid("editor");
       registerTile(id, "editor");
+      lastActiveTile.set("editor", id);
+      const currentWs = workspaceRef.current;
       setLayout((prev) => {
-        if (!prev) return id;
-        return addToLastLeaf(prev, id);
+        let next: MosaicNode<ViewId>;
+        if (!prev) next = id;
+        else next = addToLastLeaf(prev, id);
+        if (currentWs) debounceSaveLayout(currentWs, JSON.stringify(next));
+        return next;
       });
       setTimeout(() => {
         window.dispatchEvent(
@@ -691,74 +1236,88 @@ export default function MosaicLayout({ workspaceRoot }: MosaicLayoutProps) {
     return () => window.removeEventListener("create-editor-tile", handler);
   }, []);
 
-  // ── Toolbar controls ──────────────────────────────────────────────────────
-  const makeToolbar = useCallback(
-    (viewId: ViewId) => (
-      <div className="flex items-center gap-1 px-1">
-        <RemoveButton />
-      </div>
-    ),
-    [],
-  );
-
   // ── Render tile ───────────────────────────────────────────────────────────
   const renderTile = useCallback(
-    (viewId: ViewId, path: MosaicBranch[]) => {
+    (viewId: ViewId, _path: MosaicBranch[]) => {
       const entry = tileRegistry.get(viewId);
-      if (!entry) {
-        const type: TileType = viewId.startsWith("terminal")
-          ? "terminal"
-          : "editor";
-        registerTile(viewId, type);
+      const tileType: TileType =
+        entry?.meta.type ??
+        (viewId.startsWith("terminal") ? "terminal" : "editor");
+
+      if (!entry) registerTile(viewId, tileType);
+
+      // Drop target for this tile
+      const DropTarget = ({ children }: { children: React.ReactNode }) => {
+        const [{ isOver }, drop] = useDrop({
+          accept: "FILE_TAB",
+          drop: (item: {
+            path: string;
+            language: string;
+            sourceTileId: string;
+          }) => {
+            if (item.sourceTileId === viewId) return; // same tile, ignore
+            const handler = dropHandlersRef.current.get(viewId);
+            if (handler) handler(item.path);
+            // Close the tab in the source tile
+            window.dispatchEvent(
+              new CustomEvent("editor-close-tab", {
+                detail: { path: item.path },
+              }),
+            );
+          },
+          collect: (monitor) => ({ isOver: monitor.isOver() }),
+        });
         return (
-          <MosaicWindow<ViewId>
-            path={path}
-            title=""
-            toolbarControls={makeToolbar(viewId)}
-            className="bg-[var(--color-background-dark)]"
+          <div
+            ref={drop}
+            className="h-full"
+            style={
+              isOver
+                ? {
+                    outline: "2px dashed var(--color-primary)",
+                    outlineOffset: "-2px",
+                  }
+                : undefined
+            }
           >
-            {type === "editor" ? (
-              <EditorTile
-                tileId={viewId}
-                workspaceRoot={workspaceRoot}
-                onRemove={() => removeTile(viewId)}
-              />
-            ) : (
-              <TerminalTile
-                tileId={viewId}
-                workspaceRoot={workspaceRoot}
-                onRemove={() => removeTile(viewId)}
-              />
-            )}
-          </MosaicWindow>
+            {children}
+          </div>
         );
-      }
+      };
 
       return (
-        <MosaicWindow<ViewId>
-          path={path}
-          title=""
-          toolbarControls={makeToolbar(viewId)}
-          className="bg-[var(--color-background-dark)]"
-        >
-          {entry.meta.type === "editor" ? (
+        <DropTarget>
+          {tileType === "editor" ? (
             <EditorTile
               tileId={viewId}
               workspaceRoot={workspaceRoot}
               onRemove={() => removeTile(viewId)}
+              wordWrap={wordWrap}
+              onFocus={() => lastActiveTile.set("editor", viewId)}
+              onRegisterDrop={registerDrop}
+              onUnregisterDrop={unregisterDrop}
             />
           ) : (
             <TerminalTile
               tileId={viewId}
               workspaceRoot={workspaceRoot}
               onRemove={() => removeTile(viewId)}
+              onFocus={() => lastActiveTile.set("terminal", viewId)}
+              onRegisterDrop={registerDrop}
+              onUnregisterDrop={unregisterDrop}
             />
           )}
-        </MosaicWindow>
+        </DropTarget>
       );
     },
-    [workspaceRoot, removeTile, makeToolbar],
+    [workspaceRoot, removeTile, wordWrap, registerDrop, unregisterDrop],
   );
+
+  // ── Persist layout changes ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!workspaceRoot || !layout) return;
+    debounceSaveLayout(workspaceRoot, JSON.stringify(layout));
+  }, [layout, workspaceRoot]);
 
   return (
     <DndProvider backend={HTML5Backend}>

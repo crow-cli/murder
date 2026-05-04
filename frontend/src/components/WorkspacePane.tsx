@@ -230,7 +230,7 @@ export default function WorkspacePane({
                 className={`absolute inset-0 bg-[var(--color-background-deeper)] ${isActive ? "z-[10]" : "z-0"}`}
               >
                 {workspaceRoot ? (
-                  <TerminalPane workspaceRoot={workspaceRoot} />
+                  <TerminalPane workspaceRoot={workspaceRoot} terminalId={termTab.id} />
                 ) : (
                   <div className="flex items-center justify-center h-full opacity-50">
                     Open a folder to use the terminal

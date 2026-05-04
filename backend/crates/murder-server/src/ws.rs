@@ -283,6 +283,20 @@ async fn handle_message(text: &str, app: &App) -> Value {
         "get_recent_workspaces" => handlers::handle_get_recent_workspaces(&state, &request.params),
         "add_recent_workspace" => handlers::handle_add_recent_workspace(&state, &request.params),
 
+        // Mosaic layout methods (SQLite-backed)
+        "get_mosaic_layout" => handlers::handle_get_mosaic_layout(&state, &request.params),
+        "save_mosaic_layout" => handlers::handle_save_mosaic_layout(&state, &request.params),
+
+        // Explorer state methods (SQLite-backed)
+        "get_explorer_state" => handlers::handle_get_explorer_state(&state, &request.params),
+        "save_explorer_state" => handlers::handle_save_explorer_state(&state, &request.params),
+
+        // Tile state methods (SQLite-backed)
+        "get_tile_states" => handlers::handle_get_tile_states(&state, &request.params),
+        "save_tile_state" => handlers::handle_save_tile_state(&state, &request.params),
+        "delete_tile_state" => handlers::handle_delete_tile_state(&state, &request.params),
+        "clear_tile_states" => handlers::handle_clear_tile_states(&state, &request.params),
+
         unknown => Err(format!("unknown method: {unknown}")),
     };
 

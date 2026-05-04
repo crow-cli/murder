@@ -777,3 +777,109 @@ pub fn handle_add_recent_workspace(state: &AppState, params: &Value) -> Result<V
         .map_err(|e| format!("failed to add recent workspace: {e}"))?;
     Ok(json!({ "success": true }))
 }
+
+// ---------------------------------------------------------------------------
+// Mosaic layout handlers (SQLite-backed, per workspace)
+// ---------------------------------------------------------------------------
+
+/// Resolve workspace path: from params or from AppState.
+fn resolve_workspace(state: &AppState, params: &Value) -> Result<String, String> {
+    if let Some(ws) = params["workspace"].as_str() {
+        return Ok(ws.to_string());
+    }
+    state.workspace_root().ok_or("no workspace open".to_string())
+}
+
+/// Load the mosaic layout tree for the current workspace.
+pub fn handle_get_mosaic_layout(state: &AppState, params: &Value) -> Result<Value, String> {
+    let workspace = resolve_workspace(state, params)?;
+    let layout = murder_db::layout::load_mosaic_layout(&state.db.lock(), &workspace)
+        .map_err(|e| format!("failed to load mosaic layout: {e}"))?;
+    Ok(json!({ "layout": layout }))
+}
+
+/// Save the mosaic layout tree for the current workspace.
+pub fn handle_save_mosaic_layout(state: &AppState, params: &Value) -> Result<Value, String> {
+    let workspace = resolve_workspace(state, params)?;
+    let layout_json = params["layout"].as_str().ok_or("missing 'layout'")?;
+    murder_db::layout::save_mosaic_layout(&state.db.lock(), &workspace, layout_json)
+        .map_err(|e| format!("failed to save mosaic layout: {e}"))?;
+    Ok(json!({ "success": true }))
+}
+
+// ---------------------------------------------------------------------------
+// Explorer state handlers (SQLite-backed, per workspace)
+// ---------------------------------------------------------------------------
+
+/// Load explorer state (expanded dirs + active file) for the current workspace.
+pub fn handle_get_explorer_state(state: &AppState, params: &Value) -> Result<Value, String> {
+    let workspace = resolve_workspace(state, params)?;
+    let state_data = murder_db::layout::load_explorer_state(&state.db.lock(), &workspace)
+        .map_err(|e| format!("failed to load explorer state: {e}"))?;
+    Ok(json!({
+        "expanded_dirs": state_data.as_ref().map(|(d, _)| d.as_str()).unwrap_or("[]"),
+        "active_file": state_data.and_then(|(_, f)| f),
+    }))
+}
+
+/// Save explorer state for the current workspace.
+pub fn handle_save_explorer_state(state: &AppState, params: &Value) -> Result<Value, String> {
+    let workspace = resolve_workspace(state, params)?;
+    let expanded_dirs = params["expanded_dirs"].as_str().ok_or("missing 'expanded_dirs'")?;
+    let active_file = params.get("active_file").and_then(|v| v.as_str());
+    murder_db::layout::save_explorer_state(&state.db.lock(), &workspace, expanded_dirs, active_file)
+        .map_err(|e| format!("failed to save explorer state: {e}"))?;
+    Ok(json!({ "success": true }))
+}
+
+// ---------------------------------------------------------------------------
+// Tile state handlers (SQLite-backed, per workspace)
+// ---------------------------------------------------------------------------
+
+/// Load all tile states for the current workspace.
+pub fn handle_get_tile_states(state: &AppState, params: &Value) -> Result<Value, String> {
+    let workspace = resolve_workspace(state, params)?;
+    let tiles = murder_db::layout::load_tile_states(&state.db.lock(), &workspace)
+        .map_err(|e| format!("failed to load tile states: {e}"))?;
+    let tiles_json: Vec<Value> = tiles
+        .into_iter()
+        .map(|(id, tile_type, state_json, minimized)| {
+            json!({
+                "tileId": id,
+                "tileType": tile_type,
+                "state": state_json,
+                "isMinimized": minimized,
+            })
+        })
+        .collect();
+    Ok(json!({ "tiles": tiles_json }))
+}
+
+/// Save or update a tile's state.
+pub fn handle_save_tile_state(state: &AppState, params: &Value) -> Result<Value, String> {
+    let workspace = resolve_workspace(state, params)?;
+    let tile_id = params["tileId"].as_str().ok_or("missing 'tileId'")?;
+    let tile_type = params["tileType"].as_str().ok_or("missing 'tileType'")?;
+    let state_json = params["state"].as_str().ok_or("missing 'state'")?;
+    let is_minimized = params["isMinimized"].as_bool().unwrap_or(false);
+    murder_db::layout::save_tile_state(&state.db.lock(), &workspace, tile_id, tile_type, state_json, is_minimized)
+        .map_err(|e| format!("failed to save tile state: {e}"))?;
+    Ok(json!({ "success": true }))
+}
+
+/// Delete a tile's state.
+pub fn handle_delete_tile_state(state: &AppState, params: &Value) -> Result<Value, String> {
+    let workspace = resolve_workspace(state, params)?;
+    let tile_id = params["tileId"].as_str().ok_or("missing 'tileId'")?;
+    murder_db::layout::delete_tile_state(&state.db.lock(), &workspace, tile_id)
+        .map_err(|e| format!("failed to delete tile state: {e}"))?;
+    Ok(json!({ "success": true }))
+}
+
+/// Delete all tile states for the current workspace (called on workspace close).
+pub fn handle_clear_tile_states(state: &AppState, params: &Value) -> Result<Value, String> {
+    let workspace = resolve_workspace(state, params)?;
+    murder_db::layout::delete_tile_states(&state.db.lock(), &workspace)
+        .map_err(|e| format!("failed to clear tile states: {e}"))?;
+    Ok(json!({ "success": true }))
+}

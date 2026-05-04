@@ -133,6 +133,10 @@ textarea {
 }
 .murder-mosaic-theme .mosaic-window-toolbar {
     display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
 }
 .murder-mosaic-theme .mosaic-window-body {
     background: var(--color-background-dark) !important;
@@ -158,4 +162,56 @@ textarea {
 }
 .murder-mosaic-theme .mosaic-split-line {
     background: var(--color-border) !important;
+}
+
+/* ── Context menu (right-click on tile tabs/panes) ──────── */
+.context-menu {
+    position: fixed;
+    z-index: 9999;
+    background: var(--color-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 4px;
+    min-width: 160px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: var(--color-foreground);
+    cursor: pointer;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+}
+.context-menu-item:hover {
+    background: var(--color-hover);
+}
+.context-menu-item.danger {
+    color: var(--color-destructive);
+}
+.context-menu-separator {
+    height: 1px;
+    background: var(--color-border);
+    margin: 4px 0;
+}
+.context-menu-item .shortcut {
+    margin-left: auto;
+    color: var(--color-foreground-dim);
+    font-size: 11px;
+}
+
+/* ─ Drag-and-drop: tab dragging ─────────────────────────── */
+.tab-dragging {
+    opacity: 0.5;
+}
+.tab-drop-target {
+    background: var(--color-primary-faint) !important;
+    outline: 1px dashed var(--color-primary);
 }

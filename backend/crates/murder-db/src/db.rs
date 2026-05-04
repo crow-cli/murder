@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version. Bump when adding migrations.
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 /// Wraps a `SQLite` connection and ensures schema migrations run on open.
 pub struct Database {
@@ -99,6 +99,9 @@ impl Database {
         }
         if current < 3 {
             self.migration_v3()?;
+        }
+        if current < 4 {
+            self.migration_v4()?;
         }
 
         self.conn
@@ -290,6 +293,43 @@ impl Database {
                 ",
             )
             .context("migration v3")?;
+        Ok(())
+    }
+
+    /// V4: mosaic layout persistence, explorer state, tile state per workspace.
+    fn migration_v4(&self) -> Result<()> {
+        self.conn
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS mosaic_layout (
+                    workspace_path TEXT PRIMARY KEY,
+                    layout_json  TEXT NOT NULL,
+                    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS explorer_state (
+                    workspace_path TEXT PRIMARY KEY,
+                    expanded_dirs  TEXT NOT NULL DEFAULT '[]',
+                    active_file    TEXT,
+                    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS tile_state (
+                    workspace_path TEXT NOT NULL,
+                    tile_id        TEXT NOT NULL,
+                    tile_type      TEXT NOT NULL,
+                    state_json     TEXT NOT NULL DEFAULT '{}',
+                    is_minimized   INTEGER NOT NULL DEFAULT 0,
+                    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                    PRIMARY KEY (workspace_path, tile_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_tile_state_workspace
+                    ON tile_state(workspace_path);
+                ",
+            )
+            .context("migration v4")?;
         Ok(())
     }
 }

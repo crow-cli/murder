@@ -21,6 +21,7 @@
 
 pub mod db;
 pub mod history;
+pub mod layout;
 pub mod recent;
 pub mod state;
 pub mod storage_kv;
@@ -34,6 +35,11 @@ pub use history::{
     clear_search_history, clipboard_history, close_terminal_session, remove_breakpoint,
     search_history, terminal_sessions, toggle_bookmark, upsert_breakpoint, Bookmark, Breakpoint,
     ClipboardEntry, SearchHistoryEntry, TerminalSession,
+};
+pub use layout::{
+    delete_mosaic_layout, delete_tile_state, delete_tile_states, load_explorer_state,
+    load_mosaic_layout, load_tile_states, save_explorer_state, save_mosaic_layout,
+    save_tile_state,
 };
 pub use recent::{
     add_recent_file, add_recent_workspace, clear_recent, recent_files, recent_workspaces,

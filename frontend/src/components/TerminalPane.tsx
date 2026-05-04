@@ -7,6 +7,8 @@ import "xterm/css/xterm.css";
 
 interface TerminalPaneProps {
   workspaceRoot: string;
+  /** Unique ID for this terminal instance — each tab gets its own PTY. */
+  terminalId: string;
   /** If true, skip cleanup on unmount (for tile minimize/restore). */
   keepAlive?: boolean;
 }
@@ -36,28 +38,39 @@ const TERMINAL_THEME = {
   brightWhite: "#ffffff",
 };
 
-export default function TerminalPane({ workspaceRoot, keepAlive }: TerminalPaneProps) {
+export default function TerminalPane({ workspaceRoot, terminalId, keepAlive }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const termIdRef = useRef<number | null>(null);
   const [initialized, setInitialized] = useState(false);
 
-  // Cleanup on unmount
+  // Cleanup on unmount OR terminalId change
   useEffect(() => {
     return () => {
-      if (keepAlive) return; // Minimized — don't kill PTY, don't dispose
+      if (keepAlive) return;
       if (termIdRef.current !== null) {
         ws.invoke("terminal_kill", { id: termIdRef.current }).catch(() => {});
         termIdRef.current = null;
       }
       terminalRef.current?.dispose();
+      setInitialized(false);
     };
-  }, [keepAlive]);
+  }, [keepAlive, terminalId]);
 
-  // Spawn terminal on mount
+  // Spawn terminal on mount or when terminalId changes
   useEffect(() => {
-    if (!containerRef.current || initialized) return;
+    if (!containerRef.current) return;
+    // If already initialized for this terminalId, skip
+    if (initialized) return;
+
+    // Kill previous terminal if any
+    if (termIdRef.current !== null) {
+      ws.invoke("terminal_kill", { id: termIdRef.current }).catch(() => {});
+      termIdRef.current = null;
+    }
+    terminalRef.current?.dispose();
+    setInitialized(false);
 
     const terminal = new Terminal({
       cursorBlink: true,
@@ -65,9 +78,6 @@ export default function TerminalPane({ workspaceRoot, keepAlive }: TerminalPaneP
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
       theme: TERMINAL_THEME,
       scrollback: 10000,
-      // convertEol removed — xterm.js handles \r\n from PTY natively.
-      // Setting convertEol:true causes \n→\r\n conversion which overwrites
-      // lines instead of wrapping when output exceeds terminal width.
     });
 
     const fitAddon = new FitAddon();
@@ -79,7 +89,6 @@ export default function TerminalPane({ workspaceRoot, keepAlive }: TerminalPaneP
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
-    // Handle resize
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit();
       if (termIdRef.current !== null && containerRef.current && containerRef.current.clientWidth > 0) {
@@ -95,7 +104,6 @@ export default function TerminalPane({ workspaceRoot, keepAlive }: TerminalPaneP
     });
     resizeObserver.observe(containerRef.current);
 
-    // Spawn the shell
     ws.invoke<{ id: number }>("terminal_spawn", {
       cwd: workspaceRoot,
       cols: 80,
@@ -103,12 +111,10 @@ export default function TerminalPane({ workspaceRoot, keepAlive }: TerminalPaneP
     }).then(({ id }) => {
       termIdRef.current = id;
 
-      // Send initial data
       terminal.onData((data) => {
         ws.invoke("terminal_write", { id, data }).catch(() => {});
       });
 
-      // Fit after spawn
       setTimeout(() => fitAddon.fit(), 100);
     }).catch((e) => {
       terminal.writeln(`\x1b[31mFailed to spawn terminal: ${e}\x1b[0m`);
@@ -119,7 +125,7 @@ export default function TerminalPane({ workspaceRoot, keepAlive }: TerminalPaneP
     return () => {
       resizeObserver.disconnect();
     };
-  }, [workspaceRoot]);
+  }, [workspaceRoot, terminalId]);
 
   // Handle terminal events from server
   useEffect(() => {

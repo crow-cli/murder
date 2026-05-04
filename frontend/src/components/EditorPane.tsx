@@ -150,6 +150,11 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
 
       editorRef.current = editor;
 
+      // Apply word wrap after a microtask delay (Monaco needs time to initialize internal state)
+      Promise.resolve().then(() => {
+        editor.updateOptions({ wordWrap: wordWrap ? "on" : "off" });
+      });
+
       // Cursor tracking
       editor.onDidChangeCursorPosition((e) => {
         onCursorChangeRef.current?.(e.position.lineNumber, e.position.column);
@@ -227,6 +232,8 @@ const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(
       requestAnimationFrame(() => {
         editor.layout();
       });
+      // Extra safety: layout again after a short delay for restored tiles
+      setTimeout(() => editor.layout(), 100);
 
       // Listen for content changes to track dirty state
       const disposable = model.onDidChangeContent(() => {
